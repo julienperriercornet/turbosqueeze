@@ -247,9 +247,9 @@ extern "C" void turbosqueezeEncode( struct TSCompressionContext* ctx, uint8_t *i
         last_i = i;
 
 #ifdef TURBOSQUEEZE_DEBUG
-        if (block == 36 && abs(((int) rep_last_i) - 213631) < 16)
+        if ((block == 36) && (rep_last_i == 213610))
         {
-            printf( "smousse i=%u\n", i );
+            printf( "smousse i=%u last_i=%u rep_last_i=%u\n", i, last_i, rep_last_i );
         }
 #endif
 
@@ -257,7 +257,7 @@ extern "C" void turbosqueezeEncode( struct TSCompressionContext* ctx, uint8_t *i
         while ((i < size) && ((i-last_i) < 16))
         {
             hit = addHit( ctx, inputBlock, i, rep_last_i, size, hitlength, hitpos );
-            hit = hit && ((rep_last_i - hitpos) < ((1<<16) - 16)) && ((hitpos + hitlength) < rep_last_i);
+            hit = hit && ((rep_last_i - hitpos) < ((1<<16) - 32)) && ((hitpos + hitlength) < rep_last_i);
             if (hit) break;
             i++;
         }
@@ -284,6 +284,7 @@ extern "C" void turbosqueezeEncode( struct TSCompressionContext* ctx, uint8_t *i
             entryBuffer[entryPos].base = rep_last_i;
 
             assert( hitpos + hitlength < entryBuffer[entryPos].base );
+            assert((rep_last_i - hitpos) < (1<<16));
 
             entryPos++;
 

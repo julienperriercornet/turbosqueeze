@@ -40,7 +40,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 // Enables a test mode to debug corrupt output
-#define TURBOSQUEEZE_DEBUG
+//#define TURBOSQUEEZE_DEBUG
 
 
 #define TURBOSQUEEZE_BLOCK_BITS (18)
