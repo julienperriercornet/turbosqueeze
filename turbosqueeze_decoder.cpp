@@ -41,10 +41,118 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "turbosqueeze_context.h"
 
 
-// In the (near) future this function will be deprecated in favor of always using decoding with dictionnaries
-// Consider this as a prototype/POC
+static bool isLE()
+{
+#if defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)
+    return true;
+#elif defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
+    return false;
+#elif defined(__clang__) && __LITTLE_ENDIAN__
+    return true;
+#elif defined(__clang__) && __BIG_ENDIAN__
+    return false;
+#elif defined(_MSC_VER) && (_M_AMD64 || _M_IX86)
+    return true;
+#elif defined(__DMC__) && defined(_M_IX86)
+    return true;
+#else
+    union { uint32_t u; uint8_t c[4]; } one = { 1 };
+    return one.c[0] != 0;
+#endif
+}
+
+
+static uint16_t read16BE( const uint8_t* stream )
+{
+    return stream[0] | (stream[1] << 8);
+}
+
+
+static void turbosqueezeDecodeBE( uint8_t *inputBlock, uint8_t *outputBlock, uint32_t *outputSize, uint32_t inputSize )
+{
+    uint32_t size = 0;
+    static uint32_t block; block++;
+
+    size = inputBlock[0];
+    size |= inputBlock[1] << 8;
+    size |= inputBlock[2] << 16;
+
+    *outputSize = 0;
+
+    // Corrupt data?
+    if (size > TURBOSQUEEZE_BLOCK_SZ) return;
+
+    uint32_t i=3, j=0;
+
+    while (j < size)
+    {
+        uint8_t ctrl_byte = inputBlock[i]; i++;
+        uint32_t ctrl_mask = 1 << 7;
+
+        while (ctrl_mask)
+        {
+            uint32_t base = j;
+
+            uint8_t ctr = inputBlock[i]; i++;
+
+            uint32_t sz1 = (ctr >> 4) + 1;
+            uint32_t offset1 = read16BE( &inputBlock[i] );
+
+            bool rep1 = (ctrl_byte & ctrl_mask) != 0;
+
+            uint8_t *src1 = rep1 ? &outputBlock[base-offset1] : &inputBlock[i];
+
+#ifdef TURBOSQUEEZE_DEBUG
+            for (uint32_t k=0; (j+k)<size && k<sz1; k++)
+            {
+                assert( src1[k] == outputBlock[j+k] );
+            }
+
+            memcpy( &outputBlock[j], src1, sz1 );
+#else
+            turbosqueeze_memcpy8( &outputBlock[j], src1 );
+            turbosqueeze_memcpy8( &outputBlock[j+8], &src1[8] );
+#endif
+
+            i += rep1 ? 2 : sz1;
+            j += sz1;
+
+            ctrl_mask >>= 1;
+
+            bool rep2 = (ctrl_byte & ctrl_mask) != 0;
+
+            uint32_t sz2 = (ctr & 0xF) + 1;
+            uint32_t offset2 = read16BE( &inputBlock[i] );
+
+            uint8_t *src2 = rep2 ? &outputBlock[base-offset2] : &inputBlock[i];
+
+#ifdef TURBOSQUEEZE_DEBUG
+            for (uint32_t k=0; (j+k)<size && k<sz2; k++)
+            {
+                assert( src2[k] == outputBlock[j+k] );
+            }
+
+            memcpy( &outputBlock[j], src2, sz2 );
+#else
+            turbosqueeze_memcpy8( &outputBlock[j], src2 );
+            turbosqueeze_memcpy8( &outputBlock[j+8], &src2[8] );
+#endif
+
+            i += rep2 ? 2 : sz2;
+            j += sz2;
+
+            ctrl_mask >>= 1;
+        }
+    }
+
+    *outputSize = size;
+}
+
+
 extern "C" void turbosqueezeDecode( uint8_t *inputBlock, uint8_t *outputBlock, uint32_t *outputSize, uint32_t inputSize )
 {
+    if (!isLE()) turbosqueezeDecodeBE( inputBlock, outputBlock, outputSize, inputSize );
+
     uint32_t size = 0;
     static uint32_t block; block++;
 

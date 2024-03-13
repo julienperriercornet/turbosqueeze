@@ -204,7 +204,7 @@ int main( int argc, const char** argv )
 {
     if (argc != 4)
     {
-        printf("turbosqueeze v0.1 alpha\n"
+        printf("turbosqueeze v0.3 alpha\n"
         "(C) 2024, Julien Perrier-cornet. Free software under BSD 3-clause Licence.\n"
         "\n"
 #ifndef TURBOSQUEEZE_DEBUG
