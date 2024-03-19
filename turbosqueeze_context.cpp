@@ -44,23 +44,45 @@ extern "C" void turbosqueezeDeallocateCompression(struct TSCompressionContext* c
 {
     if (ctx->refhash != nullptr) align_free(ctx->refhash);
     if (ctx->refhashcount != nullptr) align_free(ctx->refhashcount);
+    if (ctx->hash != nullptr) align_free(ctx->hash);
+    if (ctx->positions != nullptr) align_free(ctx->positions);
     align_free( ctx );
 }
 
 
-extern "C" struct TSCompressionContext* turbosqueezeAllocateCompression()
+extern "C" struct TSCompressionContext* turbosqueezeAllocateCompression(uint32_t n)
 {
+    if (n > 16) n = 16;
+
     struct TSCompressionContext* context = (struct TSCompressionContext*) align_alloc( MAX_CACHE_LINE_SIZE, sizeof(struct TSCompressionContext) );
 
     if (context)
     {
+        context->compressionLevel = n;
         context->refhash = nullptr;
         context->refhashcount = nullptr;
+        context->hash = nullptr;
+        context->positions = nullptr;
 
-        context->refhash = (struct TSCompressionContext::SymRef*) align_alloc( MAX_CACHE_LINE_SIZE, TURBOSQUEEZE_REFHASH_SZ*TURBOSQUEEZE_REFHASH_ENTITIES*sizeof(struct TSCompressionContext::SymRef) );
+        if (n == 0)
+        {
+            context->refhash = (struct TSCompressionContext::SymRefFast*) align_alloc( MAX_CACHE_LINE_SIZE, TURBOSQUEEZE_REFHASH_SZ*TURBOSQUEEZE_REFHASH_ENTITIES*sizeof(struct TSCompressionContext::SymRefFast) );
+        }
+        else
+        {
+            context->hash = (struct TSCompressionContext::SymRef*) align_alloc( MAX_CACHE_LINE_SIZE, TURBOSQUEEZE_REFHASH_PLUS_SZ*TURBOSQUEEZE_REFHASH_ENTITIES*sizeof(struct TSCompressionContext::SymRef) );
+            context->positions = (uint32_t*) align_alloc( MAX_CACHE_LINE_SIZE, TURBOSQUEEZE_MAX_SYMS*n*4*sizeof(uint32_t) );
+        }
+
         context->refhashcount = (uint8_t*) align_alloc( MAX_CACHE_LINE_SIZE, TURBOSQUEEZE_REFHASH_SZ*sizeof(uint8_t) );
 
-        if (context->refhash == nullptr || context->refhashcount == nullptr)
+        if (context->compressionLevel == 0 && (context->refhash == nullptr || context->refhashcount == nullptr))
+        {
+            turbosqueezeDeallocateCompression( context );
+            context = nullptr;
+        }
+
+        if (context->compressionLevel > 0 && (context->hash == nullptr || context->positions == nullptr))
         {
             turbosqueezeDeallocateCompression( context );
             context = nullptr;

@@ -43,13 +43,28 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 static void init(struct TSCompressionContext* ctx)
 {
-    memset( ctx->refhashcount, 0, TURBOSQUEEZE_REFHASH_SZ*sizeof(uint8_t) );
+    if (ctx->compressionLevel == 0)
+    {
+        memset( ctx->refhashcount, 0, TURBOSQUEEZE_REFHASH_SZ*sizeof(uint8_t) );
+    }
+    else
+    {
+        memset( ctx->refhashcount, 0, TURBOSQUEEZE_REFHASH_PLUS_SZ*sizeof(uint8_t) );
+    }
+
+    ctx->posIdx = 0;
 }
 
 
 static inline uint32_t getHash( uint32_t h )
 {
     return (((h & (0xFFFFFFFF - (TURBOSQUEEZE_REFHASH_SZ - 1))) >> (32-TURBOSQUEEZE_REFHASH_BITS)) ^ (h & (TURBOSQUEEZE_REFHASH_SZ - 1)));
+}
+
+
+static inline uint32_t getHash2( uint32_t h )
+{
+    return (((h & (0xFFFFFFFF - (TURBOSQUEEZE_REFHASH_PLUS_SZ - 1))) >> (32-TURBOSQUEEZE_BLOCK_BITS)) ^ (h & (TURBOSQUEEZE_REFHASH_PLUS_SZ - 1)));
 }
 
 
@@ -76,7 +91,7 @@ static inline uint32_t matchlen( uint8_t *inbuff, uint32_t first, uint32_t secon
 }
 
 
-static inline bool addHit( struct TSCompressionContext *context, uint8_t *input, uint32_t i, uint32_t decoded_size, uint32_t size, uint32_t &hitlength, uint32_t &hitpos)
+static inline bool addHitFast( struct TSCompressionContext *context, uint8_t *input, uint32_t i, uint32_t decoded_size, uint32_t size, uint32_t &hitlength, uint32_t &hitpos)
 {
     if (i < size-3)
     {
@@ -98,18 +113,10 @@ static inline bool addHit( struct TSCompressionContext *context, uint8_t *input,
 
             if (matchlength >= 4)
             {
-                context->refhash[hitidx].n_occurences++;
-
                 hitlength = matchlength;
                 hitpos = context->refhash[hitidx].latest_pos;
 
                 context->refhash[hitidx].latest_pos = i;
-
-                // It's actually pretty optionnal to keep track of the longest match
-                if (matchlength > context->refhash[hitidx].longest_match)
-                {
-                    context->refhash[hitidx].longest_match = matchlength;
-                }
 
                 return true;
             }
@@ -119,8 +126,94 @@ static inline bool addHit( struct TSCompressionContext *context, uint8_t *input,
             // New sym
             context->refhash[hitidx].sym4 = str4;
             context->refhash[hitidx].latest_pos = i;
-            context->refhash[hitidx].longest_match = 0;
-            context->refhash[hitidx].n_occurences = 1;
+
+            context->refhashcount[hash]++;
+        }
+    }
+
+    return false;
+}
+
+
+static inline bool addHit( struct TSCompressionContext *context, uint8_t *input, uint32_t i, uint32_t decoded_size, uint32_t size, uint32_t &hitlength, uint32_t &hitpos)
+{
+    if (i < size-3)
+    {
+        uint32_t str4 = *((uint32_t*) (input+i));
+        uint32_t hash = getHash2(str4);
+        uint32_t hitidx = hash*TURBOSQUEEZE_REFHASH_ENTITIES;
+        uint32_t j = 0;
+
+        while (j < context->refhashcount[hash] && context->hash[hitidx].sym4 != str4)
+        {
+            j++;
+            hitidx++;
+        }
+
+        if (j < context->refhashcount[hash])
+        {
+            if (context->hash[hitidx].n_occurences == 1)
+            {
+                uint32_t matchlength = matchlen( input, context->hash[hitidx].position, i, decoded_size, size );
+
+                if (matchlength >= 4)
+                {
+                    context->hash[hitidx].n_occurences++;
+
+                    hitlength = matchlength;
+                    hitpos = context->hash[hitidx].position;
+
+                    // allocate hits
+                    uint32_t firstpos = context->hash[hitidx].position;
+                    uint32_t pos = context->hash[hitidx].position = context->posIdx;
+
+                    context->positions[pos] = firstpos;
+                    context->positions[pos+1] = i;
+
+                    context->posIdx += context->compressionLevel*4;
+
+                    return true;
+                }
+            }
+            else
+            {
+                uint32_t n_occ = context->hash[hitidx].n_occurences > context->compressionLevel*4 ? context->compressionLevel*4 : context->hash[hitidx].n_occurences;
+                uint32_t pos = context->hash[hitidx].position;
+                uint32_t maxmatchlength = 0;
+                uint32_t maxmatchpos = 0xFFFFFFFF;
+
+                for (uint32_t k=0; k<n_occ; k++)
+                {
+                    if ((decoded_size - context->positions[pos+k]) < ((1<<16) - 32))
+                    {
+                        uint32_t matchlength = matchlen( input, context->positions[pos+k], i, decoded_size, size );
+
+                        if (matchlength > maxmatchlength)
+                        {
+                            maxmatchlength = matchlength;
+                            maxmatchpos = context->positions[pos+k];
+                        }
+                    }
+                }
+
+                if (maxmatchlength >= 4)
+                {
+                    context->positions[pos+(context->hash[hitidx].n_occurences%(context->compressionLevel*4))] = i;
+                    context->hash[hitidx].n_occurences++;
+
+                    hitlength = maxmatchlength;
+                    hitpos = maxmatchpos;
+
+                    return true;
+                }
+            }
+        }
+        else if (j < TURBOSQUEEZE_REFHASH_ENTITIES)
+        {
+            // New sym
+            context->hash[hitidx].sym4 = str4;
+            context->hash[hitidx].position = i;
+            context->hash[hitidx].n_occurences = 1;
 
             context->refhashcount[hash]++;
         }
@@ -156,16 +249,9 @@ static uint32_t writeOutput( struct seqEntry *entryBuffer, uint32_t *entryPos, u
 
         outptr[i++] = size_byte;
 
-        if (!finalize)
-        {
-            assert( entryBuffer[j*2].base == entryBuffer[j*2+1].base );
-        }
-
         if (entryBuffer[j*2].repeat)
         {
             uint32_t offset = entryBuffer[j*2].base - entryBuffer[j*2].position;
-            //*((uint16_t*) &outptr[i]) = (uint16_t) offset;
-            assert( (entryBuffer[j*2].position + entryBuffer[j*2].size) < entryBuffer[j*2].base );
             outptr[i] = offset & 0xFF;
             outptr[i+1] = (offset >> 8) & 0xFF;
             i += 2;
@@ -180,8 +266,6 @@ static uint32_t writeOutput( struct seqEntry *entryBuffer, uint32_t *entryPos, u
         if (entryBuffer[j*2+1].repeat)
         {
             uint32_t offset = entryBuffer[j*2].base - entryBuffer[j*2+1].position;
-            //*((uint16_t*) &outptr[i]) = (uint16_t) offset;
-            assert( (entryBuffer[j*2+1].position + entryBuffer[j*2+1].size) < entryBuffer[j*2].base );
             outptr[i] = offset & 0xFF;
             outptr[i+1] = (offset >> 8) & 0xFF;
             i += 2;
@@ -246,20 +330,26 @@ extern "C" void turbosqueezeEncode( struct TSCompressionContext* ctx, uint8_t *i
 
         last_i = i;
 
-#ifdef TURBOSQUEEZE_DEBUG
-        if ((block == 36) && (rep_last_i == 213610))
-        {
-            printf( "smousse i=%u last_i=%u rep_last_i=%u\n", i, last_i, rep_last_i );
-        }
-#endif
-
         // Count NoHit characters
-        while ((i < size) && ((i-last_i) < 16))
+        if (ctx->compressionLevel == 0)
         {
-            hit = addHit( ctx, inputBlock, i, rep_last_i, size, hitlength, hitpos );
-            hit = hit && ((rep_last_i - hitpos) < ((1<<16) - 32)) && ((hitpos + hitlength) < rep_last_i);
-            if (hit) break;
-            i++;
+            while ((i < size) && ((i-last_i) < 16))
+            {
+                hit = addHitFast( ctx, inputBlock, i, rep_last_i, size, hitlength, hitpos );
+                hit = hit && ((rep_last_i - hitpos) < ((1<<16) - 32)) && ((hitpos + hitlength) < rep_last_i);
+                if (hit) break;
+                i++;
+            }
+        }
+        else
+        {
+            while ((i < size) && ((i-last_i) < 16))
+            {
+                hit = addHit( ctx, inputBlock, i, rep_last_i, size, hitlength, hitpos );
+                hit = hit && ((rep_last_i - hitpos) < ((1<<16) - 32)) && ((hitpos + hitlength) < rep_last_i);
+                if (hit) break;
+                i++;
+            }
         }
 
         // Litterals
@@ -282,9 +372,6 @@ extern "C" void turbosqueezeEncode( struct TSCompressionContext* ctx, uint8_t *i
             entryBuffer[entryPos].size = hitlength;
             entryBuffer[entryPos].position = hitpos;
             entryBuffer[entryPos].base = rep_last_i;
-
-            assert( hitpos + hitlength < entryBuffer[entryPos].base );
-            assert((rep_last_i - hitpos) < (1<<16));
 
             entryPos++;
 

@@ -34,6 +34,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <cstdio>
 #include <cstdlib>
 #include <cassert>
+#include <cstring>
 #include <time.h>
 
 
@@ -41,14 +42,14 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "../platform.h"
 
 
-void compress( FILE* in, FILE* out, const char* infilename, const char* outfilename )
+void compress( FILE* in, FILE* out, const char* infilename, const char* outfilename, uint32_t n )
 {
     clock_t start = clock();
 
     uint8_t* inbuff = (uint8_t*) align_alloc( MAX_CACHE_LINE_SIZE, TURBOSQUEEZE_BLOCK_SZ*sizeof(uint8_t) );
     uint8_t* outbuff = (uint8_t*) align_alloc( MAX_CACHE_LINE_SIZE, TURBOSQUEEZE_OUTPUT_SZ*sizeof(uint8_t) );
 
-    struct TSCompressionContext* ctx = turbosqueezeAllocateCompression();
+    struct TSCompressionContext* ctx = turbosqueezeAllocateCompression( n );
 
     clock_t accumRead = 1, accumEncode = 0, accumWrite = 0;
 
@@ -64,7 +65,7 @@ void compress( FILE* in, FILE* out, const char* infilename, const char* outfilen
 
         while ( to_read > 0 && to_read == fread( inbuff, 1, to_read, in ) )
         {
-            uint32_t outputSize;
+            uint32_t outputSize = 0;
 
             clock_t startencode = clock();
 
@@ -162,7 +163,7 @@ void test( FILE* in, FILE* out, const char* infilename, const char* outfilename 
     uint8_t* inbuff = (uint8_t*) align_alloc( MAX_CACHE_LINE_SIZE, TURBOSQUEEZE_OUTPUT_SZ*sizeof(uint8_t) );
     uint8_t* outbuff = (uint8_t*) align_alloc( MAX_CACHE_LINE_SIZE, TURBOSQUEEZE_OUTPUT_SZ*sizeof(uint8_t) );
 
-    struct TSCompressionContext* ctx = turbosqueezeAllocateCompression();
+    struct TSCompressionContext* ctx = turbosqueezeAllocateCompression( 1 );
 
     if (ctx && inbuff && outbuff)
     {
@@ -204,14 +205,10 @@ int main( int argc, const char** argv )
 {
     if (argc != 4)
     {
-        printf("turbosqueeze v0.3 alpha\n"
+        printf("turbosqueeze v0.4 alpha\n"
         "(C) 2024, Julien Perrier-cornet. Free software under BSD 3-clause Licence.\n"
         "\n"
-#ifndef TURBOSQUEEZE_DEBUG
-        "To compress/decompress: turbosqueeze c/d input output\n"
-#else
-        "Test mode: turbosqueeze t input output\n"
-#endif
+        "To compress/decompress: turbosqueeze -c:0..16/-d input output\n"
         );
         return 1;
     }
@@ -222,15 +219,10 @@ int main( int argc, const char** argv )
     FILE *out = fopen(argv[3], "wb");
     if (!out) return 1;
 
-#ifndef TURBOSQUEEZE_DEBUG
-    if (argv[1][0] == 'c')
-        compress(in, out, argv[2], argv[3]);
-    else if (argv[1][0] == 'd')
+    if (strncmp(argv[1], "-c:", 3) == 0)
+        compress(in, out, argv[2], argv[3], atoi(argv[1]+3));
+    else if (strncmp(argv[1], "-d", 2) == 0)
         decompress(in, out, argv[2], argv[3]);
-#else
-    if (argv[1][0] == 't')
-        test(in, out, argv[2], argv[3]);
-#endif
 
     fclose(in);
     fclose(out);
