@@ -170,14 +170,14 @@ static inline bool addHit( struct TSCompressionContext *context, uint8_t *input,
                     context->positions[pos] = firstpos;
                     context->positions[pos+1] = i;
 
-                    context->posIdx += context->compressionLevel*4;
+                    context->posIdx += context->compressionLevel*8;
 
                     return true;
                 }
             }
             else
             {
-                uint32_t n_occ = context->hash[hitidx].n_occurences > context->compressionLevel*4 ? context->compressionLevel*4 : context->hash[hitidx].n_occurences;
+                uint32_t n_occ = context->hash[hitidx].n_occurences > context->compressionLevel*8 ? context->compressionLevel*8 : context->hash[hitidx].n_occurences;
                 uint32_t pos = context->hash[hitidx].position;
                 uint32_t maxmatchlength = 0;
                 uint32_t maxmatchpos = 0xFFFFFFFF;
@@ -198,7 +198,7 @@ static inline bool addHit( struct TSCompressionContext *context, uint8_t *input,
 
                 if (maxmatchlength >= 4)
                 {
-                    context->positions[pos+(context->hash[hitidx].n_occurences%(context->compressionLevel*4))] = i;
+                    context->positions[pos+(context->hash[hitidx].n_occurences%(context->compressionLevel*8))] = i;
                     context->hash[hitidx].n_occurences++;
 
                     hitlength = maxmatchlength;
