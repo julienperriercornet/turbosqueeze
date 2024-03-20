@@ -208,7 +208,8 @@ int main( int argc, const char** argv )
         printf("turbosqueeze v0.4 alpha\n"
         "(C) 2024, Julien Perrier-cornet. Free software under BSD 3-clause Licence.\n"
         "\n"
-        "To compress/decompress: turbosqueeze -c:0..16/-d input output\n"
+        "To compress: turbosqueeze -c:0..4 input output\n"
+        "To decompress: turbosqueeze -d input output\n"
         );
         return 1;
     }
