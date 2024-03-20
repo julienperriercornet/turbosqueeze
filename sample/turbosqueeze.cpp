@@ -205,7 +205,7 @@ int main( int argc, const char** argv )
 {
     if (argc != 4)
     {
-        printf("turbosqueeze v0.4 alpha\n"
+        printf("turbosqueeze v0.5 alpha\n"
         "(C) 2024, Julien Perrier-cornet. Free software under BSD 3-clause Licence.\n"
         "\n"
         "To compress: turbosqueeze -c:0..4 input output\n"
