@@ -2,7 +2,7 @@ cmake_minimum_required( VERSION 3.1 )
 
 project(
     libturbosqueeze
-    VERSION 0.2
+    VERSION 0.4
     LANGUAGES CXX)
 
 include(CTest)

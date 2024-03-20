@@ -51,14 +51,21 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #pragma pack(1)
 struct TSCompressionContext {
     // LZ string matching
-    struct SymRef {
+    struct SymRefFast {
         uint32_t sym4;
         uint32_t latest_pos;
-        uint16_t n_occurences;
-        uint16_t longest_match;
     };
-    struct SymRef *refhash;
+    struct SymRef {
+        uint32_t sym4;
+        uint32_t position;
+        uint32_t n_occurences;
+    };
+    struct SymRefFast *refhash;
+    struct SymRef *hash;
+    uint32_t *positions;
     uint8_t *refhashcount;
+    uint32_t posIdx;
+    uint32_t compressionLevel;
 };
 #pragma pack()
 
@@ -67,7 +74,7 @@ struct TSCompressionContext {
 extern "C" {
 #endif
 
-    struct TSCompressionContext* turbosqueezeAllocateCompression();
+    struct TSCompressionContext* turbosqueezeAllocateCompression( uint32_t n );
     void turbosqueezeDeallocateCompression(struct TSCompressionContext* ctx);
     void turbosqueezeEncode( struct TSCompressionContext* ctx, uint8_t *inputBlock, uint8_t *outputBlock, uint32_t *outputSize, uint32_t inputSize );
     void turbosqueezeEncodeWithDictionnary( struct TSCompressionContext* ctx, uint8_t *inputBlock, uint8_t *outputBlock, uint32_t *outputSize, uint32_t inputSize, uint32_t inputOffset );

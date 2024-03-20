@@ -102,17 +102,8 @@ static void turbosqueezeDecodeBE( uint8_t *inputBlock, uint8_t *outputBlock, uin
 
             uint8_t *src1 = rep1 ? &outputBlock[base-offset1] : &inputBlock[i];
 
-#ifdef TURBOSQUEEZE_DEBUG
-            for (uint32_t k=0; (j+k)<size && k<sz1; k++)
-            {
-                assert( src1[k] == outputBlock[j+k] );
-            }
-
-            memcpy( &outputBlock[j], src1, sz1 );
-#else
             turbosqueeze_memcpy8( &outputBlock[j], src1 );
             turbosqueeze_memcpy8( &outputBlock[j+8], &src1[8] );
-#endif
 
             i += rep1 ? 2 : sz1;
             j += sz1;
@@ -126,17 +117,8 @@ static void turbosqueezeDecodeBE( uint8_t *inputBlock, uint8_t *outputBlock, uin
 
             uint8_t *src2 = rep2 ? &outputBlock[base-offset2] : &inputBlock[i];
 
-#ifdef TURBOSQUEEZE_DEBUG
-            for (uint32_t k=0; (j+k)<size && k<sz2; k++)
-            {
-                assert( src2[k] == outputBlock[j+k] );
-            }
-
-            memcpy( &outputBlock[j], src2, sz2 );
-#else
             turbosqueeze_memcpy8( &outputBlock[j], src2 );
             turbosqueeze_memcpy8( &outputBlock[j+8], &src2[8] );
-#endif
 
             i += rep2 ? 2 : sz2;
             j += sz2;
@@ -185,17 +167,8 @@ extern "C" void turbosqueezeDecode( uint8_t *inputBlock, uint8_t *outputBlock, u
 
             uint8_t *src1 = rep1 ? &outputBlock[base-offset1] : &inputBlock[i];
 
-#ifdef TURBOSQUEEZE_DEBUG
-            for (uint32_t k=0; (j+k)<size && k<sz1; k++)
-            {
-                assert( src1[k] == outputBlock[j+k] );
-            }
-
-            memcpy( &outputBlock[j], src1, sz1 );
-#else
             turbosqueeze_memcpy8( &outputBlock[j], src1 );
             turbosqueeze_memcpy8( &outputBlock[j+8], &src1[8] );
-#endif
 
             i += rep1 ? 2 : sz1;
             j += sz1;
@@ -209,17 +182,8 @@ extern "C" void turbosqueezeDecode( uint8_t *inputBlock, uint8_t *outputBlock, u
 
             uint8_t *src2 = rep2 ? &outputBlock[base-offset2] : &inputBlock[i];
 
-#ifdef TURBOSQUEEZE_DEBUG
-            for (uint32_t k=0; (j+k)<size && k<sz2; k++)
-            {
-                assert( src2[k] == outputBlock[j+k] );
-            }
-
-            memcpy( &outputBlock[j], src2, sz2 );
-#else
             turbosqueeze_memcpy8( &outputBlock[j], src2 );
             turbosqueeze_memcpy8( &outputBlock[j+8], &src2[8] );
-#endif
 
             i += rep2 ? 2 : sz2;
             j += sz2;
