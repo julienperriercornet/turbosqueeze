@@ -74,6 +74,8 @@ struct TSCompressionContext {
 extern "C" {
 #endif
 
+    void turbosqueeze_decompress( const char* inname, const char* outname );
+
     struct TSCompressionContext* turbosqueezeAllocateCompression( uint32_t n );
     void turbosqueezeDeallocateCompression(struct TSCompressionContext* ctx);
     void turbosqueezeEncode( struct TSCompressionContext* ctx, uint8_t *inputBlock, uint8_t *outputBlock, uint32_t *outputSize, uint32_t inputSize );

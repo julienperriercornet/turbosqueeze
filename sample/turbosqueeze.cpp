@@ -222,8 +222,11 @@ int main( int argc, const char** argv )
 
     if (strncmp(argv[1], "-c:", 3) == 0)
         compress(in, out, argv[2], argv[3], atoi(argv[1]+3));
+    else if (strncmp(argv[1], "-c", 2) == 0)
+        compress(in, out, argv[2], argv[3], 0);
     else if (strncmp(argv[1], "-d", 2) == 0)
-        decompress(in, out, argv[2], argv[3]);
+        turbosqueeze_decompress(argv[2], argv[3]);
+        //decompress(in, out, argv[2], argv[3]);
 
     fclose(in);
     fclose(out);

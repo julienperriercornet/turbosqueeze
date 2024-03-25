@@ -73,7 +73,7 @@ extern "C" struct TSCompressionContext* turbosqueezeAllocateCompression(uint32_t
         {
             context->refhashcount = (uint8_t*) align_alloc( MAX_CACHE_LINE_SIZE, TURBOSQUEEZE_REFHASH_PLUS_SZ*sizeof(uint8_t) );
             context->hash = (struct TSCompressionContext::SymRef*) align_alloc( MAX_CACHE_LINE_SIZE, TURBOSQUEEZE_REFHASH_PLUS_SZ*TURBOSQUEEZE_REFHASH_ENTITIES*sizeof(struct TSCompressionContext::SymRef) );
-            context->positions = (uint32_t*) align_alloc( MAX_CACHE_LINE_SIZE, TURBOSQUEEZE_MAX_SYMS*n*4*sizeof(uint32_t) );
+            context->positions = (uint32_t*) align_alloc( MAX_CACHE_LINE_SIZE, TURBOSQUEEZE_MAX_SYMS*n*8*sizeof(uint32_t) );
         }
 
 

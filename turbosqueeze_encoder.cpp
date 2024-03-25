@@ -299,6 +299,7 @@ static uint32_t writeOutput( struct seqEntry *entryBuffer, uint32_t *entryPos, u
     return i;
 }
 
+
 extern "C" void turbosqueezeEncode( struct TSCompressionContext* ctx, uint8_t *inputBlock, uint8_t *outputBlock, uint32_t *outputSize, uint32_t inputSize )
 {
     const uint32_t size = inputSize;
