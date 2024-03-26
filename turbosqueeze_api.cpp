@@ -81,15 +81,16 @@ extern "C" void turbosqueeze_decompress( const char* inname, const char* outname
                 to_read += fgetc(in) << 8;
                 to_read += fgetc(in) << 16;
 
-                inputStart[i] = inputPos;
-                inputSize[i] = to_read;
-                outputStart[i] = outputPos+3;
+                inputStart[i] = inputPos+3;
+                inputSize[i] = to_read-3;
+                outputStart[i] = outputPos;
 
                 if (to_read > 0 && to_read < TURBOSQUEEZE_OUTPUT_SZ && !feof(in) && (to_read == fread( &buffer[inputPos], 1, to_read, in )))
                 {
                     outputSize[i] = buffer[inputPos];
                     outputSize[i] |= buffer[inputPos+1] << 8;
                     outputSize[i] |= buffer[inputPos+2] << 16;
+                    outputPos += outputSize[i];
                     inputPos += to_read;
                 }
                 else
