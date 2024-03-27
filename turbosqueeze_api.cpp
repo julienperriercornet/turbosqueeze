@@ -42,7 +42,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 #ifdef AVX2
-extern "C" void turbosqueezeDecodeInternalAVX2( uint8_t *memory, uint32_t inputStart[8], uint32_t inputSize[8], uint32_t outputStart[8], uint32_t outputSize[8] );
+extern "C" void turbosqueezeDecodeInternalAVX2( uint8_t *memory, uint32_t inputStart[8], uint32_t inputSize[8], uint32_t outputStart[8], uint32_t outputSize[8], uint32_t last_i );
 #endif
 
 extern "C" void turbosqueeze_decompress( const char* inname, const char* outname )
@@ -110,7 +110,7 @@ extern "C" void turbosqueeze_decompress( const char* inname, const char* outname
             clock_t startdecode = clock();
 
 #ifdef AVX2
-            turbosqueezeDecodeInternalAVX2( buffer, inputStart, inputSize, outputStart, outputSize );
+            turbosqueezeDecodeInternalAVX2( buffer, inputStart, inputSize, outputStart, outputSize, last_i );
 #else
             //turbosqueezeDecode( inbuff, outbuff, &outputSize, to_read );
 #endif

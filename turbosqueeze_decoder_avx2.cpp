@@ -72,7 +72,7 @@ static inline __m256i _mm256_select_epi32( __m256i a, __m256i b, __m256i mask )
 #endif
 
 
-extern "C" void turbosqueezeDecodeInternalAVX2( uint8_t *memory, uint32_t inputStart[8], uint32_t inputSize[8], uint32_t outputStart[8], uint32_t outputSize[8] )
+extern "C" void turbosqueezeDecodeInternalAVX2( uint8_t *memory, uint32_t inputStart[8], uint32_t inputSize[8], uint32_t outputStart[8], uint32_t outputSize[8], uint32_t last_i )
 {
 #ifdef __AVX2__
 
@@ -144,6 +144,130 @@ extern "C" void turbosqueezeDecodeInternalAVX2( uint8_t *memory, uint32_t inputS
             i = _mm256_add_epi32( i, _mm256_select_epi32( sz2, constant_2, rep2 ) );
             j = _mm256_add_epi32( j, sz2 );
             control_mask = _mm256_srli_epi32( control_mask, 1 );
+        }
+    }
+
+    // Complete remaining streams
+    union jind {
+        __m256i j;
+        int32_t j8[8];
+    } jind;
+
+    union iind {
+        __m256i i;
+        int32_t i8[8];
+    } iind;
+
+    union end {
+        __m256i e;
+        int32_t e8[8];
+    } end;
+
+    _mm256_storeu_si256( (__m256i*) &jind.j, j );
+    _mm256_storeu_si256( (__m256i*) &iind.i, i );
+    _mm256_storeu_si256( (__m256i*) &end.e, sizem );
+
+    for (uint32_t k=0; k<last_i; k++)
+    {
+        uint32_t ii = iind.i8[k];
+        uint32_t jj = jind.j8[k];
+        uint32_t size = end.e8[k];
+
+        while (jj < size)
+        {
+            uint8_t ctrl_byte = memory[ii]; ii++;
+            uint32_t ctrl_mask = 1 << 7;
+
+            while (ctrl_mask)
+            {
+                uint32_t base = jj;
+
+                uint8_t ctr = memory[ii]; ii++;
+
+                uint32_t sz1 = (ctr >> 4) + 1;
+                uint32_t offset1 = *((uint16_t*) (&memory[ii]));
+
+                bool rep1 = (ctrl_byte & ctrl_mask) != 0;
+
+                uint8_t *src1 = rep1 ? &memory[base-offset1] : &memory[ii];
+
+                _mm_storeu_si128( (__m128i_u*) (memory+jj), _mm_lddqu_si128( (__m128i_u*) src1 ));
+
+                ii += rep1 ? 2 : sz1;
+                jj += sz1;
+
+                ctrl_mask >>= 1;
+
+                bool rep2 = (ctrl_byte & ctrl_mask) != 0;
+
+                uint32_t sz2 = (ctr & 0xF) + 1;
+                uint32_t offset2 = *((uint16_t*) (&memory[ii]));
+
+                uint8_t *src2 = rep2 ? &memory[base-offset2] : &memory[ii];
+
+                _mm_storeu_si128( (__m128i_u*) (memory+jj), _mm_lddqu_si128( (__m128i_u*) src2 ));
+
+                ii += rep2 ? 2 : sz2;
+                jj += sz2;
+
+                ctrl_mask >>= 1;
+            }
+        }
+
+        iind.i8[k] = ii;
+        jind.j8[k] = jj;
+        end.e8[k] = size;
+    }
+
+    // Safe decoding the end of the stream (last 256 bytes) using memcpy and exact size
+
+    for (uint32_t k=0; k<last_i; k++)
+    {
+        uint32_t ii = iind.i8[k];
+        uint32_t jj = jind.j8[k];
+        uint32_t size = outputStart[k] + outputSize[k];
+
+        while (jj < size)
+        {
+            uint8_t ctrl_byte = memory[ii]; ii++;
+            uint32_t ctrl_mask = 1 << 7;
+
+            while (jj < size && ctrl_mask)
+            {
+                uint32_t base = jj;
+
+                uint8_t ctr = memory[ii]; ii++;
+
+                uint32_t sz1 = (ctr >> 4) + 1;
+                uint32_t offset1 = *((uint16_t*) (&memory[ii]));
+
+                bool rep1 = (ctrl_byte & ctrl_mask) != 0;
+
+                uint8_t *src1 = rep1 ? &memory[base-offset1] : &memory[ii];
+
+                memcpy( memory+jj, src1, sz1 );
+
+                ii += rep1 ? 2 : sz1;
+                jj += sz1;
+
+                if (jj >= size) break;
+
+                ctrl_mask >>= 1;
+
+                bool rep2 = (ctrl_byte & ctrl_mask) != 0;
+
+                uint32_t sz2 = (ctr & 0xF) + 1;
+                uint32_t offset2 = *((uint16_t*) (&memory[ii]));
+
+                uint8_t *src2 = rep2 ? &memory[base-offset2] : &memory[ii];
+
+                memcpy( memory+jj, src2, sz2 );
+
+                ii += rep2 ? 2 : sz2;
+                jj += sz2;
+
+                ctrl_mask >>= 1;
+            }
         }
     }
 

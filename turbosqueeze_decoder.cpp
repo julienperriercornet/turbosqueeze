@@ -36,7 +36,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <cstdlib>
 #include <cstring>
 #include <cassert>
-#include <x86intrin.h>
 
 
 #include "turbosqueeze_context.h"
@@ -168,9 +167,8 @@ extern "C" void turbosqueezeDecode( uint8_t *inputBlock, uint8_t *outputBlock, u
 
             uint8_t *src1 = rep1 ? &outputBlock[base-offset1] : &inputBlock[i];
 
-            //turbosqueeze_memcpy8( &outputBlock[j], src1 );
-            //turbosqueeze_memcpy8( &outputBlock[j+8], &src1[8] );
-            _mm_storeu_si128( (__m128i_u*) &outputBlock[j], _mm_lddqu_si128((__m128i_u*) src1));
+            turbosqueeze_memcpy8( &outputBlock[j], src1 );
+            turbosqueeze_memcpy8( &outputBlock[j+8], &src1[8] );
 
             i += rep1 ? 2 : sz1;
             j += sz1;
@@ -184,9 +182,8 @@ extern "C" void turbosqueezeDecode( uint8_t *inputBlock, uint8_t *outputBlock, u
 
             uint8_t *src2 = rep2 ? &outputBlock[base-offset2] : &inputBlock[i];
 
-            //turbosqueeze_memcpy8( &outputBlock[j], src2 );
-            //turbosqueeze_memcpy8( &outputBlock[j+8], &src2[8] );
-            _mm_storeu_si128( (__m128i_u*) &outputBlock[j], _mm_lddqu_si128((__m128i_u*) src2));
+            turbosqueeze_memcpy8( &outputBlock[j], src2 );
+            turbosqueeze_memcpy8( &outputBlock[j+8], &src2[8] );
 
             i += rep2 ? 2 : sz2;
             j += sz2;
