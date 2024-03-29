@@ -104,13 +104,13 @@ extern "C" void turbosqueezeDecodeInternalAVX2( uint8_t *memory, uint32_t inputS
                 __m256i src1;
                 int32_t src8[8];
             } src;
-            _mm256_storeu_si256( (__m256i*) &src.src1, _mm256_select_epi32( i, _mm256_sub_epi32( base, offset1 ), rep1 ) );
+            _mm256_store_si256( (__m256i*) &src.src1, _mm256_select_epi32( i, _mm256_sub_epi32( base, offset1 ), rep1 ) );
 
             union dst {
                 __m256i j;
                 int32_t j8[8];
             } dst;
-            _mm256_storeu_si256( (__m256i*) &dst.j, j );
+            _mm256_store_si256( (__m256i*) &dst.j, j );
 
             _mm_storeu_si128( (__m128i_u*) (memory+dst.j8[0]), _mm_lddqu_si128( (__m128i_u*) (memory+src.src8[0]) ));
             _mm_storeu_si128( (__m128i_u*) (memory+dst.j8[1]), _mm_lddqu_si128( (__m128i_u*) (memory+src.src8[1]) ));
@@ -129,8 +129,8 @@ extern "C" void turbosqueezeDecodeInternalAVX2( uint8_t *memory, uint32_t inputS
             __m256i sz2 = _mm256_add_epi32( _mm256_and_si256( counter, constant_15 ), constant_1 );
             __m256i offset2 = _mm256_and_si256( _mm256_i32gather_epi32( (int*) memory, i, 1 ), constant_65535 );
 
-            _mm256_storeu_si256( (__m256i*) &src.src1, _mm256_select_epi32( i, _mm256_sub_epi32( base, offset2 ), rep2 ) );
-            _mm256_storeu_si256( (__m256i*) &dst.j, j );
+            _mm256_store_si256( (__m256i*) &src.src1, _mm256_select_epi32( i, _mm256_sub_epi32( base, offset2 ), rep2 ) );
+            _mm256_store_si256( (__m256i*) &dst.j, j );
 
             _mm_storeu_si128( (__m128i_u*) (memory+dst.j8[0]), _mm_lddqu_si128( (__m128i_u*) (memory+src.src8[0]) ));
             _mm_storeu_si128( (__m128i_u*) (memory+dst.j8[1]), _mm_lddqu_si128( (__m128i_u*) (memory+src.src8[1]) ));
