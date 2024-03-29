@@ -219,7 +219,7 @@ extern "C" void turbosqueezeDecodeInternalAVX2( uint8_t *memory, uint32_t inputS
         end.e8[k] = size;
     }
 
-    // Safe decoding the end of the stream (last 256 bytes) using memcpy and exact size
+    // Safe decoding the end of the stream (last 256 bytes or less) using memcpy and exact size
 
     for (uint32_t k=0; k<last_i; k++)
     {
@@ -229,20 +229,18 @@ extern "C" void turbosqueezeDecodeInternalAVX2( uint8_t *memory, uint32_t inputS
 
         while (jj < size)
         {
-            uint8_t ctrl_byte = memory[ii]; ii++;
+            uint8_t ctrl_byte = memory[ii++];
             uint32_t ctrl_mask = 1 << 7;
 
             while (jj < size && ctrl_mask)
             {
                 uint32_t base = jj;
 
-                uint8_t ctr = memory[ii]; ii++;
+                uint8_t ctr = memory[ii++];
 
                 uint32_t sz1 = (ctr >> 4) + 1;
                 uint32_t offset1 = *((uint16_t*) (&memory[ii]));
-
                 bool rep1 = (ctrl_byte & ctrl_mask) != 0;
-
                 uint8_t *src1 = rep1 ? &memory[base-offset1] : &memory[ii];
 
                 memcpy( memory+jj, src1, sz1 );
@@ -255,10 +253,8 @@ extern "C" void turbosqueezeDecodeInternalAVX2( uint8_t *memory, uint32_t inputS
                 ctrl_mask >>= 1;
 
                 bool rep2 = (ctrl_byte & ctrl_mask) != 0;
-
                 uint32_t sz2 = (ctr & 0xF) + 1;
                 uint32_t offset2 = *((uint16_t*) (&memory[ii]));
-
                 uint8_t *src2 = rep2 ? &memory[base-offset2] : &memory[ii];
 
                 memcpy( memory+jj, src2, sz2 );
