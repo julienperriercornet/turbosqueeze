@@ -51,43 +51,75 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 namespace TurboSqueeze {
 
     // Reader
-    size_t FileReader::read(char* buffer, size_t *bufferStart, size_t bufferSize) override
+    size_t FileReader::read(char** buffer, size_t *bufferStart, size_t bufferSize) override
     {
-        // Implement file reading logic
-        // ... read data from file into buffer
-        // Return the number of bytes read
-        return 0; // Placeholder
+        *bufferStart = 0;
+
+        if (!infile)
+            infile = new std::ifstream(filename, std::ios::binary);
+
+        if (!infile || !infile.is_open()) return 0;
+
+        if (infile->read(*buffer, bufferSize))
+            return bufferSize;
+        else
+            return 0;
     }
 
-    size_t MemoryReader::read(char* buffer, size_t *bufferStart, size_t bufferSize) override
+    size_t MemoryReader::read(char** buffer, size_t *bufferStart, size_t bufferSize) override
     {
         size_t remaining = memorySize - currentPosition;
         size_t bytesToRead = remaining < bufferSize ? remaining : bufferSize;
-        memcpy(buffer, memoryData + currentPosition, bytesToRead);
+
+        *buffer = memoryData;
+        *bufferStart = currentPosition;
         currentPosition += bytesToRead;
+
         return bytesToRead;
     }
 
     // Writer
-    void FileWriter::write(const char* data, size_t dataSize) override
+    void FileWriter::getdest(char** data, size_t size) override;
     {
-        // Implement file writing logic
-        // ... write data to file
+        if (!buffer) buffer = new uint8_t[TURBOSQUEEZE_OUTPUT_SZ];
+
+        bufferSize = size;
+
+        if (size <= TURBOSQUEEZE_OUTPUT_SZ)
+            *data = buffer;
+        else
+            *data = nullptr;
     }
 
-    void MemoryWriter::write(const char* data, size_t dataSize) override
+    void FileWriter::write() override;
+    {
+        outfile = new std::ofstream(filename, std::ios::binary);
+        if (!outfile) return;
+        if (!infile.is_open()) return;
+        outfile->write(buffer, bufferSize);
+    }
+
+    void MemoryWriter::getdest(char** data, size_t dataSize) override;
     {
         size_t remaining = memorySize - currentPosition;
+
         if (dataSize > remaining)
         {
+            *data = nullptr;
             overflow = true;
         }
         else
         {
-            memcpy(memoryData + currentPosition, data, dataSize);
+            *data = memoryData + currentPosition;
             currentPosition += dataSize;
         }
     }
+
+    void MemoryWriter::write() override
+    {
+    }
+
+    // Compression helpers
 
     // Compression method
     void FastCompressor::compress(IReader& reader, IWriter& writer)

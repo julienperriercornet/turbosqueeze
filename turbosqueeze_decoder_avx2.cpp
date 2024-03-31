@@ -163,9 +163,9 @@ extern "C" void turbosqueezeDecodeInternalAVX2( uint8_t *memory, uint32_t inputS
         int32_t e8[8];
     } end;
 
-    _mm256_storeu_si256( (__m256i*) &jind.j, j );
-    _mm256_storeu_si256( (__m256i*) &iind.i, i );
-    _mm256_storeu_si256( (__m256i*) &end.e, sizem );
+    _mm256_store_si256( (__m256i*) &jind.j, j );
+    _mm256_store_si256( (__m256i*) &iind.i, i );
+    _mm256_store_si256( (__m256i*) &end.e, sizem );
 
     for (uint32_t k=0; k<last_i; k++)
     {

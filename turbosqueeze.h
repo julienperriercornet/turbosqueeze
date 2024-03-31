@@ -33,6 +33,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+
 #include <cstdint>
 
 
@@ -44,7 +45,7 @@ namespace TurboSqueeze {
     class IReader {
     public:
         virtual ~IReader() {}
-        virtual size_t read(char* buffer, size_t *bufferStart, size_t bufferSize) = 0;
+        virtual size_t read(char** buffer, size_t *bufferStart, size_t bufferSize) = 0;
     };
 
     enum class Reader { File, Memory };
@@ -58,7 +59,8 @@ namespace TurboSqueeze {
     class IWriter {
     public:
         virtual ~IWriter() {}
-        virtual void write(const char* data, size_t dataSize) = 0;
+        virtual void getdest(char** data, size_t size) = 0;
+        virtual void write() = 0;
     };
 
     enum class Writer { File, Memory };
@@ -69,9 +71,10 @@ namespace TurboSqueeze {
     // File Reader implementation
     class FileReader : public IReader {
         std::string filename;
+        std::ifstream *infile;
     public:
-        FileReader(const std::string& file) : filename(file) {}
-        size_t read(char* buffer, size_t *bufferStart, size_t bufferSize) override;
+        FileReader(const std::string& file) : filename(file), infile(nullptr) {}
+        size_t read(char** buffer, size_t *bufferStart, size_t bufferSize) override;
     };
 
     // Memory Reader implementation
@@ -82,15 +85,19 @@ namespace TurboSqueeze {
 
     public:
         MemoryReader(const char* data, size_t size) : memoryData(data), memorySize(size), currentPosition(0) {}
-        size_t read(char* buffer, size_t *bufferStart, size_t bufferSize) override;
+        size_t read(char** buffer, size_t *bufferStart, size_t bufferSize) override;
     };
 
     // File Writer implementation
     class FileWriter : public IWriter {
         std::string filename;
+        std::ofstream *outfile;
+        uint8_t *buffer;
+        size_t bufferSize;
     public:
-        FileWriter(const std::string& file) : filename(file) {}
-        void write(const char* data, size_t dataSize) override;
+        FileWriter(const std::string& file) : filename(file), outfile(nullptr), buffer(nullptr), bufferSize(0) {}
+        void getdest(char** data, size_t size) override;
+        void write() override;
     };
 
     // Memory Writer implementation
@@ -102,7 +109,8 @@ namespace TurboSqueeze {
 
     public:
         MemoryWriter(char* data, size_t size) : memoryData(data), memorySize(size), currentPosition(0), overflow(false) {}
-        void write(const char* data, size_t dataSize) override;
+        void getdest(char** data, size_t size) override;
+        void write() override;
         bool isOverflow() const { return overflow; }
     };
 
