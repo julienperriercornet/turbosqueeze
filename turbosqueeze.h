@@ -34,6 +34,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 
+#include <iostream>
 #include <cstdint>
 
 
@@ -50,8 +51,8 @@ namespace TurboSqueeze {
 
     enum class Reader { File, Memory };
 
-    class IReader* ReaderFactory( const enum class Reader type );
-    void ReaderDestroy( class IReader* reader );
+    IReader* ReaderFactory( const enum Reader type );
+    void ReaderDestroy( IReader* reader );
 
     /*
      * Writer interface
@@ -65,54 +66,8 @@ namespace TurboSqueeze {
 
     enum class Writer { File, Memory };
 
-    class IWriter* WriterFactory( const enum class Writer type );
-    void WriterDestroy( class IWriter* writer );
-
-    // File Reader implementation
-    class FileReader : public IReader {
-        std::string filename;
-        std::ifstream *infile;
-    public:
-        FileReader(const std::string& file) : filename(file), infile(nullptr) {}
-        size_t read(char** buffer, size_t *bufferStart, size_t bufferSize) override;
-    };
-
-    // Memory Reader implementation
-    class MemoryReader : public IReader {
-        const char* memoryData;
-        size_t memorySize;
-        size_t currentPosition;
-
-    public:
-        MemoryReader(const char* data, size_t size) : memoryData(data), memorySize(size), currentPosition(0) {}
-        size_t read(char** buffer, size_t *bufferStart, size_t bufferSize) override;
-    };
-
-    // File Writer implementation
-    class FileWriter : public IWriter {
-        std::string filename;
-        std::ofstream *outfile;
-        uint8_t *buffer;
-        size_t bufferSize;
-    public:
-        FileWriter(const std::string& file) : filename(file), outfile(nullptr), buffer(nullptr), bufferSize(0) {}
-        void getdest(char** data, size_t size) override;
-        void write() override;
-    };
-
-    // Memory Writer implementation
-    class MemoryWriter : public IWriter {
-        char* memoryData;
-        size_t memorySize;
-        size_t currentPosition;
-        bool overflow;
-
-    public:
-        MemoryWriter(char* data, size_t size) : memoryData(data), memorySize(size), currentPosition(0), overflow(false) {}
-        void getdest(char** data, size_t size) override;
-        void write() override;
-        bool isOverflow() const { return overflow; }
-    };
+    IWriter* WriterFactory( const enum Writer type );
+    void WriterDestroy( IWriter* writer );
 
     /*
      * Compressor interface
@@ -125,20 +80,8 @@ namespace TurboSqueeze {
         virtual void compress(IReader& reader, IWriter& writer) = 0;
     };
 
-    class ICompressor* CompressorFactory( uint32_t compression_level );
-    void CompressorDestroy( class ICompressor* compressor );
-
-    class FastCompressor : public ICompressor {
-    public:
-        FastCompressor( uint32_t compression_level ) : ICompressor( compression_level ) {}
-        void compress(IReader& reader, IWriter& writer) override;
-    };
-
-    class FastNCompressor : public ICompressor {
-    public:
-        FastNCompressor( uint32_t compression_level ) : ICompressor( compression_level ) {}
-        void compress(IReader& reader, IWriter& writer) override;
-    };
+    ICompressor* CompressorFactory( uint32_t compression_level );
+    void CompressorDestroy( ICompressor* compressor );
 
     /*
      * Decompressor interface
@@ -149,23 +92,8 @@ namespace TurboSqueeze {
         virtual void decompress(IReader& reader, IWriter& writer) = 0;
     };
 
-    class IDecompressor* DecompressorFactory();
-    void DecompressorDestroy( class IDecompressor* decompressor );
-
-    class LittleEndianDecompressor {
-    public:
-        void decompress(IReader& reader, IWriter& writer) override;
-    };
-
-    class BigEndianDecompressor {
-    public:
-        void decompress(IReader& reader, IWriter& writer) override;
-    };
-
-    class AVX2Decompressor {
-    public:
-        void decompress(IReader& reader, IWriter& writer) override;
-    };
+    IDecompressor* DecompressorFactory();
+    void DecompressorDestroy( IDecompressor* decompressor );
 
 }
 
