@@ -4,7 +4,7 @@ option(AVX2 "Build with Avx2 optimisations" OFF)
 
 project(
     libturbosqueeze
-    VERSION 0.5
+    VERSION 1.0
     LANGUAGES CXX)
 
 include(CTest)
@@ -27,14 +27,8 @@ endif()
 
 set(
     SOURCE_FILES
-    libturbosqueeze.h
-    turbosqueeze_context.h
-    turbosqueeze_context.cpp
-    turbosqueeze_decoder.cpp
-    turbosqueeze_dict.cpp
-    turbosqueeze_encoder.cpp
-    turbosqueeze_api.cpp
-    platform.h)
+    turbosqueeze.h
+    turbosqueeze.cpp)
 
 add_library( turbosqueeze STATIC ${SOURCE_FILES} ${AVX2_FILES} )
 

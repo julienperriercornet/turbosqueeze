@@ -73,11 +73,15 @@ namespace TurboSqueeze {
      * Compressor interface
      */
     class ICompressor {
+    protected:
         uint32_t compressionLevel;
+        void encode( uint8_t *inbuff, uint8_t *outbuff, uint32_t *outputSize, uint32_t inputSize );
+        virtual bool addHit( uint8_t *input, uint32_t i, uint32_t decoded_size, uint32_t size, uint32_t &hitlength, uint32_t &hitpos) = 0;
+        virtual void init() = 0;
     public:
         ICompressor( uint32_t compression_level ) : compressionLevel( compression_level ) {}
         virtual ~ICompressor() {}
-        virtual void compress(IReader& reader, IWriter& writer) = 0;
+        void compress(IReader& reader, IWriter& writer);
     };
 
     ICompressor* CompressorFactory( uint32_t compression_level );
@@ -87,9 +91,11 @@ namespace TurboSqueeze {
      * Decompressor interface
      */
     class IDecompressor {
+    protected:
+        virtual void decode( uint8_t *inbuff, uint8_t *outbuff, uint32_t *outputSize, uint32_t inputSize ) = 0;
     public:
         virtual ~IDecompressor() {}
-        virtual void decompress(IReader& reader, IWriter& writer) = 0;
+        void decompress(IReader& reader, IWriter& writer);
     };
 
     IDecompressor* DecompressorFactory();
