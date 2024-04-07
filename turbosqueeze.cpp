@@ -712,7 +712,7 @@ namespace TurboSqueeze {
             uint8_t *inbuff;
             size_t i;
 
-            reader.read(&inbuff, &i, 6);
+            reader.read((char**) &inbuff, &i, 6);
 
             uint32_t to_read = inbuff[i++];
             to_read += inbuff[i++] << 8;
@@ -722,12 +722,12 @@ namespace TurboSqueeze {
             size += inbuff[i++] << 8;
             size += inbuff[i++] << 16;
 
-            if (to_read > 0 && to_read < TURBOSQUEEZE_OUTPUT_SZ && to_read == reader.read(&inbuff, &i, to_read-3))
+            if (to_read > 0 && to_read < TURBOSQUEEZE_OUTPUT_SZ && to_read == reader.read((char**) &inbuff, &i, to_read-3))
             {
                 uint8_t *out;
-                size_t j = writer.getdest( &out, size );
+                writer.getdest( (char**) &out, size );
 
-                decode( inbuff+i, out+j, &size, to_read );
+                decode( inbuff+i, out, &size, to_read );
 
                 writer.write();
             }
@@ -736,7 +736,7 @@ namespace TurboSqueeze {
     }
 
     // Decompressor
-    void LittleEndianDecompressor::decode( uint8_t *inbuff, uint8_t *outbuff, uint32_t *outputSize, uint32_t inputSize )
+    void LittleEndianDecompressor::decode( uint8_t *inputBlock, uint8_t *outputBlock, uint32_t *outputSize, uint32_t inputSize )
     {
         uint32_t size = *outputSize;
 
@@ -798,7 +798,7 @@ namespace TurboSqueeze {
         return stream[0] | (stream[1] << 8);
     }
 
-    void BigEndianDecompressor::decode( uint8_t *inbuff, uint8_t *outbuff, uint32_t *outputSize, uint32_t inputSize )
+    void BigEndianDecompressor::decode( uint8_t *inputBlock, uint8_t *outputBlock, uint32_t *outputSize, uint32_t inputSize )
     {
         uint32_t size = *outputSize;
 
