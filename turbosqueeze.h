@@ -47,6 +47,7 @@ namespace TurboSqueeze {
     public:
         virtual ~IReader() {}
         virtual size_t read(char** buffer, size_t *bufferStart, size_t bufferSize) = 0;
+        virtual bool eof() = 0;
     };
 
     enum class Reader { File, Memory };
@@ -93,6 +94,7 @@ namespace TurboSqueeze {
     class IDecompressor {
     protected:
         virtual void decode( uint8_t *inbuff, uint8_t *outbuff, uint32_t *outputSize, uint32_t inputSize ) = 0;
+        void decodeFinalSafeInternal( uint8_t *inbuff, uint8_t *outbuff, uint32_t *outputSize, uint32_t inputSize );
     public:
         virtual ~IDecompressor() {}
         void decompress(IReader& reader, IWriter& writer);

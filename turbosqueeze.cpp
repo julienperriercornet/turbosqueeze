@@ -35,6 +35,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "turbosqueeze.h"
 #include <iostream>
 #include <fstream>
+#include <cstring> // for memset
 
 
 #if _MSC_VER
@@ -72,6 +73,7 @@ namespace TurboSqueeze {
         std::ifstream *infile;
     public:
         FileReader() : filename(), infile(nullptr) {}
+        bool eof() override { return infile && infile->eof(); }
         void set(const std::string& file) { filename = file; }
         size_t read(char** buffer, size_t *bufferStart, size_t bufferSize) override;
     };
@@ -83,6 +85,7 @@ namespace TurboSqueeze {
         size_t currentPosition;
     public:
         MemoryReader() : memoryData(nullptr), memorySize(0), currentPosition(0) {}
+        bool eof() override { return currentPosition < memorySize; }
         void set(char* data, size_t size) { memoryData = data; memorySize = size; }
         size_t read(char** buffer, size_t *bufferStart, size_t bufferSize) override;
     };
@@ -217,8 +220,11 @@ namespace TurboSqueeze {
     #pragma pack()
         struct SymRefFast *refhash;
         uint8_t *refhashcount;
+        void init() override;
+        bool addHit( uint8_t *input, uint32_t i, uint32_t decoded_size, uint32_t size, uint32_t &hitlength, uint32_t &hitpos) override;
     public:
-        FastCompressor( uint32_t compression_level ) : ICompressor( compression_level ) {}
+        FastCompressor( uint32_t compression_level );
+        ~FastCompressor();
     };
 
     class FastNCompressor : public ICompressor {
@@ -233,8 +239,10 @@ namespace TurboSqueeze {
         uint32_t *positions;
         uint8_t *refhashcount;
         uint32_t posIdx;
+        void init() override;
+        bool addHit( uint8_t *input, uint32_t i, uint32_t decoded_size, uint32_t size, uint32_t &hitlength, uint32_t &hitpos) override;
     public:
-        FastNCompressor( uint32_t compression_level ) : ICompressor( compression_level ) {}
+        FastNCompressor( uint32_t compression_level );
         ~FastNCompressor();
     };
 
@@ -252,38 +260,108 @@ namespace TurboSqueeze {
     }
 
     // Compression helpers
+    struct seqEntry {
+        bool repeat;
+        uint8_t size;
+        uint32_t position;
+        uint32_t base;
+    };
+
+
+    static uint32_t writeOutput( struct seqEntry *entryBuffer, uint32_t *entryPos, uint8_t *outptr, uint8_t *input, bool finalize, uint32_t processed )
+    {
+        uint8_t ctrl_byte = entryBuffer[0].repeat;
+        uint32_t i = 0;
+
+        for (uint32_t j=1; j<8; j++)
+        {
+            ctrl_byte = (ctrl_byte << 1) | entryBuffer[j].repeat;
+        }
+
+        outptr[i++] = ctrl_byte;
+
+        for (uint32_t j=0; j < 4 && ((j*2) < (*entryPos)); j++)
+        {
+            uint8_t size_byte = ((entryBuffer[j*2].size - 1) << 4) |  (entryBuffer[j*2+1].size - 1);
+
+            outptr[i++] = size_byte;
+
+            if (entryBuffer[j*2].repeat)
+            {
+                uint32_t offset = entryBuffer[j*2].base - entryBuffer[j*2].position;
+                outptr[i] = offset & 0xFF;
+                outptr[i+1] = (offset >> 8) & 0xFF;
+                i += 2;
+            }
+            else
+            {
+                turbosqueeze_memcpy8( &outptr[i], &input[entryBuffer[j*2].position] );
+                turbosqueeze_memcpy8( &outptr[i+8], &input[entryBuffer[j*2].position+8] );
+                i += entryBuffer[j*2].size;
+            }
+
+            if (entryBuffer[j*2+1].repeat)
+            {
+                uint32_t offset = entryBuffer[j*2].base - entryBuffer[j*2+1].position;
+                outptr[i] = offset & 0xFF;
+                outptr[i+1] = (offset >> 8) & 0xFF;
+                i += 2;
+            }
+            else
+            {
+                turbosqueeze_memcpy8( &outptr[i], &input[entryBuffer[j*2+1].position] );
+                turbosqueeze_memcpy8( &outptr[i+8], &input[entryBuffer[j*2+1].position+8] );
+                i += entryBuffer[j*2+1].size;
+            }
+        }
+
+        if ((*entryPos) >= 8)
+            *entryPos -= 8;
+        else
+            *entryPos = 0;
+
+        if ((*entryPos) == 1)
+        {
+            entryBuffer[0].repeat = entryBuffer[8].repeat;
+            entryBuffer[0].size = entryBuffer[8].size;
+            entryBuffer[0].position = entryBuffer[8].position;
+            entryBuffer[0].base = entryBuffer[8].base;
+
+            if (finalize)
+            {
+                i += writeOutput( entryBuffer, entryPos, outptr+i, input, true, processed+i );
+            }
+        }
+
+        return i;
+    }
 
     // Compression method
     void ICompressor::compress(IReader& reader, IWriter& writer)
     {
-        uint8_t* inbuff = (uint8_t*) align_alloc( MAX_CACHE_LINE_SIZE, TURBOSQUEEZE_BLOCK_SZ*sizeof(uint8_t) );
-        uint8_t* outbuff = (uint8_t*) align_alloc( MAX_CACHE_LINE_SIZE, TURBOSQUEEZE_OUTPUT_SZ*sizeof(uint8_t) );
-
-        if (!inbuff || !outbuff) return;
-
-        size_t remainsz = reader.getSize();
-
-        while (true)
+        do
         {
-            // Compress data
-            size_t to_read = remainsz > TURBOSQUEEZE_BLOCK_SZ ? TURBOSQUEEZE_BLOCK_SZ : remainsz;
+            uint8_t *inbuff;
+            size_t i;
 
-            if ( to_read > 0 && to_read == reader.read( inbuff, to_read ) )
+            size_t input_sz = reader.read((char**) &inbuff, &i, TURBOSQUEEZE_BLOCK_SZ);
+
+            if (input_sz > 0)
             {
+                uint8_t *outbuff;
+                writer.getdest( (char**) &outbuff, TURBOSQUEEZE_OUTPUT_SZ );
+
                 uint32_t outputSize = 0;
+                encode( inbuff+i, outbuff+3, &outputSize, input_sz );
 
-                encode( inbuff, outbuff, &outputSize, to_read );
+                outbuff[0] = (outputSize & 0xFF);
+                outbuff[1] = ((outputSize >> 8) & 0xFF);
+                outbuff[2] = ((outputSize >> 16) & 0xFF);
 
-                writer.write( &outputSize, 3 );
-                writer.write( outbuff, outputSize );
-
-                remainsz -= to_read;
+                writer.write();
             }
-            else break;
         }
-
-        if (outbuff != nullptr) align_free(outbuff);
-        if (inbuff != nullptr) align_free(inbuff);
+        while ( !reader.eof() ) ;
     }
 
     void ICompressor::encode( uint8_t *inputBlock, uint8_t *outputBlock, uint32_t *outputSize, uint32_t inputSize )
@@ -319,7 +397,7 @@ namespace TurboSqueeze {
             // Count NoHit characters
             while ((i < size) && ((i-last_i) < 16))
             {
-                hit = addHit( ctx, inputBlock, i, rep_last_i, size, hitlength, hitpos );
+                hit = addHit( inputBlock, i, rep_last_i, size, hitlength, hitpos );
                 hit = hit && ((rep_last_i - hitpos) < ((1<<16) - 32)) && ((hitpos + hitlength) < rep_last_i);
                 if (hit) break;
                 i++;
@@ -415,7 +493,7 @@ namespace TurboSqueeze {
         refhash = (FastCompressor::SymRefFast*) align_alloc( MAX_CACHE_LINE_SIZE, TURBOSQUEEZE_REFHASH_SZ*TURBOSQUEEZE_REFHASH_ENTITIES*sizeof(FastCompressor::SymRefFast) );
     }
 
-    ~FastCompressor()
+    FastCompressor::~FastCompressor()
     {
         if (refhash != nullptr) align_free(refhash);
         if (refhashcount != nullptr) align_free(refhashcount);
@@ -423,7 +501,7 @@ namespace TurboSqueeze {
 
     void FastCompressor::init()
     {
-        memset( ctx->refhashcount, 0, TURBOSQUEEZE_REFHASH_SZ*sizeof(uint8_t) );
+        memset( refhashcount, 0, TURBOSQUEEZE_REFHASH_SZ*sizeof(uint8_t) );
     }
 
     bool FastCompressor::addHit( uint8_t *input, uint32_t i, uint32_t decoded_size, uint32_t size, uint32_t &hitlength, uint32_t &hitpos)
@@ -435,23 +513,23 @@ namespace TurboSqueeze {
             uint32_t hitidx = hash*TURBOSQUEEZE_REFHASH_ENTITIES;
             uint32_t j = 0;
 
-            while (j < context->refhashcount[hash] && context->refhash[hitidx].sym4 != str4)
+            while (j < refhashcount[hash] && refhash[hitidx].sym4 != str4)
             {
                 j++;
                 hitidx++;
             }
 
-            if (j < context->refhashcount[hash])
+            if (j < refhashcount[hash])
             {
                 // Hit sym
-                uint32_t matchlength = matchlen( input, context->refhash[hitidx].latest_pos, i, decoded_size, size );
+                uint32_t matchlength = matchlen( input, refhash[hitidx].latest_pos, i, decoded_size, size );
 
                 if (matchlength >= 4)
                 {
                     hitlength = matchlength;
-                    hitpos = context->refhash[hitidx].latest_pos;
+                    hitpos = refhash[hitidx].latest_pos;
 
-                    context->refhash[hitidx].latest_pos = i;
+                    refhash[hitidx].latest_pos = i;
 
                     return true;
                 }
@@ -459,10 +537,10 @@ namespace TurboSqueeze {
             else if (j < TURBOSQUEEZE_REFHASH_ENTITIES)
             {
                 // New sym
-                context->refhash[hitidx].sym4 = str4;
-                context->refhash[hitidx].latest_pos = i;
+                refhash[hitidx].sym4 = str4;
+                refhash[hitidx].latest_pos = i;
 
-                context->refhashcount[hash]++;
+                refhashcount[hash]++;
             }
         }
 
@@ -476,7 +554,7 @@ namespace TurboSqueeze {
         positions = (uint32_t*) align_alloc( MAX_CACHE_LINE_SIZE, TURBOSQUEEZE_MAX_SYMS*compression_level*8*sizeof(uint32_t) );
     }
 
-    ~FastNCompressor()
+    FastNCompressor::~FastNCompressor()
     {
         if (refhashcount != nullptr) align_free(refhashcount);
         if (hash != nullptr) align_free(hash);
@@ -485,7 +563,7 @@ namespace TurboSqueeze {
 
     void FastNCompressor::init()
     {
-        memset( ctx->refhashcount, 0, TURBOSQUEEZE_REFHASH_PLUS_SZ*sizeof(uint8_t) );
+        memset( refhashcount, 0, TURBOSQUEEZE_REFHASH_PLUS_SZ*sizeof(uint8_t) );
     }
 
     bool FastNCompressor::addHit( uint8_t *input, uint32_t i, uint32_t decoded_size, uint32_t size, uint32_t &hitlength, uint32_t &hitpos)
@@ -493,66 +571,66 @@ namespace TurboSqueeze {
         if (i < size-3)
         {
             uint32_t str4 = *((uint32_t*) (input+i));
-            uint32_t hash = getHash2(str4);
-            uint32_t hitidx = hash*TURBOSQUEEZE_REFHASH_ENTITIES;
+            uint32_t hsh = getHash2(str4);
+            uint32_t hitidx = hsh*TURBOSQUEEZE_REFHASH_ENTITIES;
             uint32_t j = 0;
 
-            while (j < context->refhashcount[hash] && context->hash[hitidx].sym4 != str4)
+            while (j < refhashcount[hsh] && hash[hitidx].sym4 != str4)
             {
                 j++;
                 hitidx++;
             }
 
-            if (j < context->refhashcount[hash])
+            if (j < refhashcount[hsh])
             {
-                if (context->hash[hitidx].n_occurences == 1)
+                if (hash[hitidx].n_occurences == 1)
                 {
-                    uint32_t matchlength = matchlen( input, context->hash[hitidx].position, i, decoded_size, size );
+                    uint32_t matchlength = matchlen( input, hash[hitidx].position, i, decoded_size, size );
 
                     if (matchlength >= 4)
                     {
-                        context->hash[hitidx].n_occurences++;
+                        hash[hitidx].n_occurences++;
 
                         hitlength = matchlength;
-                        hitpos = context->hash[hitidx].position;
+                        hitpos = hash[hitidx].position;
 
                         // allocate hits
-                        uint32_t firstpos = context->hash[hitidx].position;
-                        uint32_t pos = context->hash[hitidx].position = context->posIdx;
+                        uint32_t firstpos = hash[hitidx].position;
+                        uint32_t pos = hash[hitidx].position = posIdx;
 
-                        context->positions[pos] = firstpos;
-                        context->positions[pos+1] = i;
+                        positions[pos] = firstpos;
+                        positions[pos+1] = i;
 
-                        context->posIdx += context->compressionLevel*8;
+                        posIdx += compressionLevel*8;
 
                         return true;
                     }
                 }
                 else
                 {
-                    uint32_t n_occ = context->hash[hitidx].n_occurences > context->compressionLevel*8 ? context->compressionLevel*8 : context->hash[hitidx].n_occurences;
-                    uint32_t pos = context->hash[hitidx].position;
+                    uint32_t n_occ = hash[hitidx].n_occurences > compressionLevel*8 ? compressionLevel*8 : hash[hitidx].n_occurences;
+                    uint32_t pos = hash[hitidx].position;
                     uint32_t maxmatchlength = 0;
                     uint32_t maxmatchpos = 0xFFFFFFFF;
 
                     for (uint32_t k=0; k<n_occ; k++)
                     {
-                        if ((decoded_size - context->positions[pos+k]) < ((1<<16) - 32))
+                        if ((decoded_size - positions[pos+k]) < ((1<<16) - 32))
                         {
-                            uint32_t matchlength = matchlen( input, context->positions[pos+k], i, decoded_size, size );
+                            uint32_t matchlength = matchlen( input, positions[pos+k], i, decoded_size, size );
 
                             if (matchlength > maxmatchlength)
                             {
                                 maxmatchlength = matchlength;
-                                maxmatchpos = context->positions[pos+k];
+                                maxmatchpos = positions[pos+k];
                             }
                         }
                     }
 
                     if (maxmatchlength >= 4)
                     {
-                        context->positions[pos+(context->hash[hitidx].n_occurences%(context->compressionLevel*8))] = i;
-                        context->hash[hitidx].n_occurences++;
+                        positions[pos+(hash[hitidx].n_occurences%(compressionLevel*8))] = i;
+                        hash[hitidx].n_occurences++;
 
                         hitlength = maxmatchlength;
                         hitpos = maxmatchpos;
@@ -564,11 +642,11 @@ namespace TurboSqueeze {
             else if (j < TURBOSQUEEZE_REFHASH_ENTITIES)
             {
                 // New sym
-                context->hash[hitidx].sym4 = str4;
-                context->hash[hitidx].position = i;
-                context->hash[hitidx].n_occurences = 1;
+                hash[hitidx].sym4 = str4;
+                hash[hitidx].position = i;
+                hash[hitidx].n_occurences = 1;
 
-                context->refhashcount[hash]++;
+                refhashcount[hsh]++;
             }
         }
 
@@ -598,17 +676,17 @@ namespace TurboSqueeze {
 
     class LittleEndianDecompressor : public IDecompressor {
     public:
-        void decompress(IReader& reader, IWriter& writer) override;
+        void decode( uint8_t *inbuff, uint8_t *outbuff, uint32_t *outputSize, uint32_t inputSize ) override;
     };
 
     class BigEndianDecompressor : public IDecompressor {
     public:
-        void decompress(IReader& reader, IWriter& writer) override;
+        void decode( uint8_t *inbuff, uint8_t *outbuff, uint32_t *outputSize, uint32_t inputSize ) override;
     };
 
     class AVX2Decompressor : public IDecompressor {
     public:
-        void decompress(IReader& reader, IWriter& writer) override;
+        void decode( uint8_t *inbuff, uint8_t *outbuff, uint32_t *outputSize, uint32_t inputSize ) override;
     };
 
     IDecompressor* DecompressorFactory()
@@ -627,43 +705,154 @@ namespace TurboSqueeze {
         delete decompressor;
     }
 
-    void LittleEndianDecompressor::decompress(IReader& reader, IWriter& writer)
+    void IDecompressor::decompress(IReader& reader, IWriter& writer)
     {
-        while (true)
+        do
         {
-            size_t bytesRead = reader.read(buffer, bufferSize);
-            if (bytesRead == 0) break; // No more data to read
+            uint8_t *inbuff;
+            size_t i;
 
-            // Compress data
-            char* compressedData = nullptr;
-            size_t compressedSize = 0;
-            // ... compression logic, fill compressedData and compressedSize
+            reader.read(&inbuff, &i, 6);
 
-            writer.write(compressedData, compressedSize);
+            uint32_t to_read = inbuff[i++];
+            to_read += inbuff[i++] << 8;
+            to_read += inbuff[i++] << 16;
 
-            // If less data than buffer size was read, we're done
-            if (bytesRead < bufferSize) break;
+            uint32_t size = inbuff[i++];
+            size += inbuff[i++] << 8;
+            size += inbuff[i++] << 16;
+
+            if (to_read > 0 && to_read < TURBOSQUEEZE_OUTPUT_SZ && to_read == reader.read(&inbuff, &i, to_read-3))
+            {
+                uint8_t *out;
+                size_t j = writer.getdest( &out, size );
+
+                decode( inbuff+i, out+j, &size, to_read );
+
+                writer.write();
+            }
         }
+        while ( reader.eof() ) ;
     }
 
     // Decompressor
-    void BigEndianDecompressor::decompress(IReader& reader, IWriter& writer)
+    void LittleEndianDecompressor::decode( uint8_t *inbuff, uint8_t *outbuff, uint32_t *outputSize, uint32_t inputSize )
     {
-        while (true)
+        uint32_t size = *outputSize;
+
+        *outputSize = 0;
+
+        // Corrupt data?
+        if (size > TURBOSQUEEZE_BLOCK_SZ) return;
+
+        uint32_t i=0, j=0;
+
+        while (j < size)
         {
-            size_t bytesRead = reader.read(buffer, bufferSize);
-            if (bytesRead == 0) break; // No more data to read
+            uint8_t ctrl_byte = inputBlock[i]; i++;
+            uint32_t ctrl_mask = 1 << 7;
 
-            // Compress data
-            char* compressedData = nullptr;
-            size_t compressedSize = 0;
-            // ... compression logic, fill compressedData and compressedSize
+            while (ctrl_mask)
+            {
+                uint32_t base = j;
 
-            writer.write(compressedData, compressedSize);
+                uint8_t ctr = inputBlock[i]; i++;
 
-            // If less data than buffer size was read, we're done
-            if (bytesRead < bufferSize) break;
+                uint32_t sz1 = (ctr >> 4) + 1;
+                uint32_t offset1 = *((uint16_t*) (&inputBlock[i]));
+
+                bool rep1 = (ctrl_byte & ctrl_mask) != 0;
+
+                uint8_t *src1 = rep1 ? &outputBlock[base-offset1] : &inputBlock[i];
+
+                turbosqueeze_memcpy8( &outputBlock[j], src1 );
+                turbosqueeze_memcpy8( &outputBlock[j+8], &src1[8] );
+
+                i += rep1 ? 2 : sz1;
+                j += sz1;
+
+                ctrl_mask >>= 1;
+
+                bool rep2 = (ctrl_byte & ctrl_mask) != 0;
+
+                uint32_t sz2 = (ctr & 0xF) + 1;
+                uint32_t offset2 = *((uint16_t*) (&inputBlock[i]));
+
+                uint8_t *src2 = rep2 ? &outputBlock[base-offset2] : &inputBlock[i];
+
+                turbosqueeze_memcpy8( &outputBlock[j], src2 );
+                turbosqueeze_memcpy8( &outputBlock[j+8], &src2[8] );
+
+                i += rep2 ? 2 : sz2;
+                j += sz2;
+
+                ctrl_mask >>= 1;
+            }
         }
+
+        *outputSize = size;
+    }
+
+    static uint16_t read16BE( const uint8_t* stream )
+    {
+        return stream[0] | (stream[1] << 8);
+    }
+
+    void BigEndianDecompressor::decode( uint8_t *inbuff, uint8_t *outbuff, uint32_t *outputSize, uint32_t inputSize )
+    {
+        uint32_t size = *outputSize;
+
+        *outputSize = 0;
+
+        // Corrupt data?
+        if (size > TURBOSQUEEZE_BLOCK_SZ) return;
+
+        uint32_t i=0, j=0;
+
+        while (j < size)
+        {
+            uint8_t ctrl_byte = inputBlock[i]; i++;
+            uint32_t ctrl_mask = 1 << 7;
+
+            while (ctrl_mask)
+            {
+                uint32_t base = j;
+
+                uint8_t ctr = inputBlock[i]; i++;
+
+                uint32_t sz1 = (ctr >> 4) + 1;
+                uint32_t offset1 = read16BE( &inputBlock[i] );
+
+                bool rep1 = (ctrl_byte & ctrl_mask) != 0;
+
+                uint8_t *src1 = rep1 ? &outputBlock[base-offset1] : &inputBlock[i];
+
+                turbosqueeze_memcpy8( &outputBlock[j], src1 );
+                turbosqueeze_memcpy8( &outputBlock[j+8], &src1[8] );
+
+                i += rep1 ? 2 : sz1;
+                j += sz1;
+
+                ctrl_mask >>= 1;
+
+                bool rep2 = (ctrl_byte & ctrl_mask) != 0;
+
+                uint32_t sz2 = (ctr & 0xF) + 1;
+                uint32_t offset2 = read16BE( &inputBlock[i] );
+
+                uint8_t *src2 = rep2 ? &outputBlock[base-offset2] : &inputBlock[i];
+
+                turbosqueeze_memcpy8( &outputBlock[j], src2 );
+                turbosqueeze_memcpy8( &outputBlock[j+8], &src2[8] );
+
+                i += rep2 ? 2 : sz2;
+                j += sz2;
+
+                ctrl_mask >>= 1;
+            }
+        }
+
+        *outputSize = size;
     }
 
 }
