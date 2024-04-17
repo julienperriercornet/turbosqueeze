@@ -43,7 +43,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #endif
 
 
-#include "turbosqueeze_context.h"
+#include "turbosqueeze.h"
 
 
 #ifdef __AVX2__
@@ -269,6 +269,80 @@ extern "C" void turbosqueezeDecodeInternalAVX2( uint8_t *memory, uint32_t inputS
 
     //*outputSize = size;
 #endif
+}
+
+
+#define TURBOSQUEEZE_BLOCK_BITS (18)
+#define TURBOSQUEEZE_BLOCK_SZ (1<<TURBOSQUEEZE_BLOCK_BITS)
+#define TURBOSQUEEZE_OUTPUT_SZ ((1<<TURBOSQUEEZE_BLOCK_BITS) + (1<<(TURBOSQUEEZE_BLOCK_BITS-2)))
+
+
+namespace TurboSqueeze {
+
+
+    class AVX2Decompressor : public IDecompressor {
+    public:
+        void decode( uint8_t *inbuff, uint8_t *outbuff, uint32_t *outputSize, uint32_t inputSize ) override;
+    };
+
+
+    // Decompressor
+    void AVX2Decompressor::decode( uint8_t *inputBlock, uint8_t *outputBlock, uint32_t *outputSize, uint32_t inputSize )
+    {
+        uint32_t size = *outputSize;
+
+        *outputSize = 0;
+
+        // Corrupt data?
+        if (size > TURBOSQUEEZE_BLOCK_SZ) return;
+
+        uint32_t i=0, j=0;
+
+        while (j < size)
+        {
+            uint8_t ctrl_byte = inputBlock[i]; i++;
+            uint32_t ctrl_mask = 1 << 7;
+
+            while (ctrl_mask)
+            {
+                uint32_t base = j;
+
+                uint8_t ctr = inputBlock[i]; i++;
+
+                uint32_t sz1 = (ctr >> 4) + 1;
+                uint32_t offset1 = *((uint16_t*) (&inputBlock[i]));
+
+                bool rep1 = (ctrl_byte & ctrl_mask) != 0;
+
+                uint8_t *src1 = rep1 ? &outputBlock[base-offset1] : &inputBlock[i];
+
+                _mm_storeu_si128( (__m128i_u*) &outputBlock[j], _mm_lddqu_si128( (__m128i_u*) src1 ));
+
+                i += rep1 ? 2 : sz1;
+                j += sz1;
+
+                ctrl_mask >>= 1;
+
+                bool rep2 = (ctrl_byte & ctrl_mask) != 0;
+
+                uint32_t sz2 = (ctr & 0xF) + 1;
+                uint32_t offset2 = *((uint16_t*) (&inputBlock[i]));
+
+                uint8_t *src2 = rep2 ? &outputBlock[base-offset2] : &inputBlock[i];
+
+                _mm_storeu_si128( (__m128i_u*) &outputBlock[j], _mm_lddqu_si128( (__m128i_u*) src2 ));
+
+                i += rep2 ? 2 : sz2;
+                j += sz2;
+
+                ctrl_mask >>= 1;
+            }
+        }
+
+        *outputSize = size;
+    }
+
+
 }
 
 

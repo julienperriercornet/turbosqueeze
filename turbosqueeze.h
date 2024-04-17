@@ -35,6 +35,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 #include <iostream>
+#include <fstream>
 #include <cstdint>
 
 
@@ -69,6 +70,56 @@ namespace TurboSqueeze {
 
     IWriter* WriterFactory( const enum Writer type );
     void WriterDestroy( IWriter* writer );
+
+    // File Reader declaration
+    class FileReader : public IReader {
+        std::string filename;
+        std::ifstream *infile;
+    public:
+        FileReader() : filename(), infile(nullptr) {}
+        bool eof() override { return infile != nullptr && !infile->good(); }
+        void set(const std::string& file) { filename = file; }
+        size_t read(char** buffer, size_t *bufferStart, size_t bufferSize) override;
+    };
+
+    // Memory Reader declaration
+    class MemoryReader : public IReader {
+        char* memoryData;
+        size_t memorySize;
+        size_t currentPosition;
+    public:
+        MemoryReader() : memoryData(nullptr), memorySize(0), currentPosition(0) {}
+        bool eof() override { return currentPosition < memorySize; }
+        void set(char* data, size_t size) { memoryData = data; memorySize = size; }
+        size_t read(char** buffer, size_t *bufferStart, size_t bufferSize) override;
+    };
+
+    // File Writer declaration
+    class FileWriter : public IWriter {
+        std::string filename;
+        std::ofstream *outfile;
+        uint8_t *buffer;
+        size_t bufferSize;
+    public:
+        FileWriter() : filename(), outfile(nullptr), buffer(nullptr), bufferSize(0) {}
+        void set(const std::string& file) { filename = file; }
+        void getdest(char** data, size_t size) override;
+        void write() override;
+    };
+
+    // Memory Writer declaration
+    class MemoryWriter : public IWriter {
+        char* memoryData;
+        size_t memorySize;
+        size_t currentPosition;
+        bool overflow;
+    public:
+        MemoryWriter() : memoryData(nullptr), memorySize(0), currentPosition(0), overflow(false) {}
+        void set(char* data, size_t size) { memoryData = data; memorySize = size; }
+        void getdest(char** data, size_t size) override;
+        void write() override;
+        bool isOverflow() const { return overflow; }
+    };
 
     /*
      * Compressor interface
