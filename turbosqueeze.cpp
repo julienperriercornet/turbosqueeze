@@ -96,14 +96,13 @@ namespace TurboSqueeze {
         *bufferStart = 0;
 
         if (!infile)
-            infile = new std::ifstream(filename, std::ios::binary);
+            infile = new std::ifstream(filename, std::ios::binary | std::ios::ate);
 
         if (!infile || !infile->is_open()) return 0;
 
-        if (infile->read(*buffer, bufferSize))
-            return bufferSize;
-        else
-            return 0;
+        infile->read(*buffer, bufferSize);
+
+        return infile->gcount();
     }
 
     size_t MemoryReader::read(char** buffer, size_t *bufferStart, size_t bufferSize)
@@ -131,12 +130,11 @@ namespace TurboSqueeze {
             *data = nullptr;
     }
 
-    void FileWriter::write()
+    void FileWriter::write( size_t dataSize )
     {
-        outfile = new std::ofstream(filename, std::ios::binary);
-        if (!outfile) return;
-        if (!outfile->is_open()) return;
-        outfile->write((const char*) buffer, bufferSize);
+        if (!outfile) outfile = new std::ofstream(filename, std::ios::binary);
+        if (!outfile || !outfile->is_open()) return;
+        outfile->write((const char*) buffer, dataSize);
     }
 
     void MemoryWriter::getdest(char** data, size_t dataSize)
@@ -151,12 +149,12 @@ namespace TurboSqueeze {
         else
         {
             *data = memoryData + currentPosition;
-            currentPosition += dataSize;
         }
     }
 
-    void MemoryWriter::write()
+    void MemoryWriter::write( size_t dataSize )
     {
+        currentPosition += dataSize;
     }
 
     // Compressor declaration and factory
@@ -307,7 +305,7 @@ namespace TurboSqueeze {
                 outbuff[1] = ((outputSize >> 8) & 0xFF);
                 outbuff[2] = ((outputSize >> 16) & 0xFF);
 
-                writer.write();
+                writer.write(outputSize);
             }
         }
         while ( !reader.eof() ) ;
@@ -513,6 +511,7 @@ namespace TurboSqueeze {
     void FastNCompressor::init()
     {
         memset( refhashcount, 0, TURBOSQUEEZE_REFHASH_PLUS_SZ*sizeof(uint8_t) );
+        posIdx = 0;
     }
 
     bool FastNCompressor::addHit( uint8_t *input, uint32_t i, uint32_t decoded_size, uint32_t size, uint32_t &hitlength, uint32_t &hitpos)
@@ -661,27 +660,28 @@ namespace TurboSqueeze {
             uint8_t *inbuff;
             size_t i;
 
-            reader.read((char**) &inbuff, &i, 6);
-
-            uint32_t to_read = inbuff[i++];
-            to_read += inbuff[i++] << 8;
-            to_read += inbuff[i++] << 16;
-
-            uint32_t size = inbuff[i++];
-            size += inbuff[i++] << 8;
-            size += inbuff[i++] << 16;
-
-            if (to_read > 0 && to_read < TURBOSQUEEZE_OUTPUT_SZ && to_read == reader.read((char**) &inbuff, &i, to_read-3))
+            if (reader.read((char**) &inbuff, &i, 6) == 6)
             {
-                uint8_t *out;
-                writer.getdest( (char**) &out, size );
+                uint32_t to_read = inbuff[i++];
+                to_read += inbuff[i++] << 8;
+                to_read += inbuff[i++] << 16;
 
-                decode( inbuff+i, out, &size, to_read );
+                uint32_t size = inbuff[i++];
+                size += inbuff[i++] << 8;
+                size += inbuff[i++] << 16;
 
-                writer.write();
+                if (to_read > 0 && to_read < TURBOSQUEEZE_OUTPUT_SZ && ((to_read-6) == reader.read((char**) &inbuff, &i, to_read-6)))
+                {
+                    uint8_t *out;
+                    writer.getdest( (char**) &out, size );
+
+                    decode( inbuff+i, out, &size, to_read );
+
+                    writer.write(size);
+                }
             }
         }
-        while ( reader.eof() ) ;
+        while ( !reader.eof() ) ;
     }
 
     // Decompressor

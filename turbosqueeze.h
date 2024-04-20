@@ -48,6 +48,7 @@ namespace TurboSqueeze {
     public:
         virtual ~IReader() {}
         virtual size_t read(char** buffer, size_t *bufferStart, size_t bufferSize) = 0;
+        virtual size_t getpos() = 0;
         virtual bool eof() = 0;
     };
 
@@ -63,7 +64,8 @@ namespace TurboSqueeze {
     public:
         virtual ~IWriter() {}
         virtual void getdest(char** data, size_t size) = 0;
-        virtual void write() = 0;
+        virtual size_t getpos() = 0;
+        virtual void write(size_t dataSize) = 0;
     };
 
     enum class Writer { File, Memory };
@@ -79,6 +81,7 @@ namespace TurboSqueeze {
         FileReader() : filename(), infile(nullptr) {}
         bool eof() override { return infile != nullptr && !infile->good(); }
         void set(const std::string& file) { filename = file; }
+        size_t getpos() override { if (infile) { return infile->tellg(); } else return 0; }
         size_t read(char** buffer, size_t *bufferStart, size_t bufferSize) override;
     };
 
@@ -89,8 +92,9 @@ namespace TurboSqueeze {
         size_t currentPosition;
     public:
         MemoryReader() : memoryData(nullptr), memorySize(0), currentPosition(0) {}
-        bool eof() override { return currentPosition < memorySize; }
+        bool eof() override { return currentPosition >= memorySize; }
         void set(char* data, size_t size) { memoryData = data; memorySize = size; }
+        size_t getpos() override { return currentPosition; }
         size_t read(char** buffer, size_t *bufferStart, size_t bufferSize) override;
     };
 
@@ -104,7 +108,8 @@ namespace TurboSqueeze {
         FileWriter() : filename(), outfile(nullptr), buffer(nullptr), bufferSize(0) {}
         void set(const std::string& file) { filename = file; }
         void getdest(char** data, size_t size) override;
-        void write() override;
+        size_t getpos() override { if (outfile) { return outfile->tellp(); } else return 0; }
+        void write(size_t dataSize) override;
     };
 
     // Memory Writer declaration
@@ -117,7 +122,8 @@ namespace TurboSqueeze {
         MemoryWriter() : memoryData(nullptr), memorySize(0), currentPosition(0), overflow(false) {}
         void set(char* data, size_t size) { memoryData = data; memorySize = size; }
         void getdest(char** data, size_t size) override;
-        void write() override;
+        void write(size_t dataSize) override;
+        size_t getpos() override { return currentPosition; }
         bool isOverflow() const { return overflow; }
     };
 

@@ -303,7 +303,8 @@ namespace TurboSqueeze {
             uint8_t ctrl_byte = inputBlock[i]; i++;
             uint32_t ctrl_mask = 1 << 7;
 
-            while (ctrl_mask)
+            #pragma unroll 4
+            for (uint32_t k=0; k<4; k++)
             {
                 uint32_t base = j;
 

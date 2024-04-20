@@ -32,9 +32,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include <cstdio>
-#include <cstdlib>
-#include <cassert>
 #include <cstring>
+#include <string>
 #include <time.h>
 
 
@@ -45,6 +44,18 @@ void compress( const char* infilename, const char* outfilename, uint32_t compres
 {
     clock_t start = clock();
 
+    auto compression_ctx = TurboSqueeze::CompressorFactory( compression_level );
+    auto file_reader = static_cast<TurboSqueeze::FileReader*>( TurboSqueeze::ReaderFactory( TurboSqueeze::Reader::File ) );
+    auto file_writer = static_cast<TurboSqueeze::FileWriter*>( TurboSqueeze::WriterFactory( TurboSqueeze::Writer::File ) );
+
+    file_reader->set( std::string(infilename) );
+    file_writer->set( std::string(outfilename) );
+
+    compression_ctx->compress( *file_reader, *file_writer );
+
+    TurboSqueeze::WriterDestroy( file_writer );
+    TurboSqueeze::ReaderDestroy( file_reader );
+    TurboSqueeze::CompressorDestroy( compression_ctx );
 
     printf("%s -> %s in %.3fs\n", infilename, outfilename, double(clock()-start) / CLOCKS_PER_SEC );
 }
@@ -54,6 +65,18 @@ void decompress( const char* infilename, const char* outfilename )
 {
     clock_t start = clock();
 
+    auto decompression_ctx = TurboSqueeze::DecompressorFactory();
+    auto file_reader = static_cast<TurboSqueeze::FileReader*>( TurboSqueeze::ReaderFactory( TurboSqueeze::Reader::Memory ) );
+    auto file_writer = static_cast<TurboSqueeze::FileWriter*>( TurboSqueeze::WriterFactory( TurboSqueeze::Writer::Memory ) );
+
+    file_reader->set( std::string(infilename) );
+    file_writer->set( std::string(outfilename) );
+
+    decompression_ctx->decompress( *file_reader, *file_writer );
+
+    TurboSqueeze::WriterDestroy( file_writer );
+    TurboSqueeze::ReaderDestroy( file_reader );
+    TurboSqueeze::DecompressorDestroy( decompression_ctx );
 
     printf("%s -> %s in %.3fs\n", infilename, outfilename, double(clock()-start) / CLOCKS_PER_SEC );
 }
@@ -105,6 +128,8 @@ void test()
 
     printf("Compression level 1 in %.3fs\n", double(clock()-start) / CLOCKS_PER_SEC );
 
+    size_t compressed_size = memory_writer->getpos();
+
     TurboSqueeze::WriterDestroy( memory_writer );
     memory_writer = nullptr;
     TurboSqueeze::ReaderDestroy( memory_reader );
@@ -117,7 +142,7 @@ void test()
     memory_reader = static_cast<TurboSqueeze::MemoryReader*>( TurboSqueeze::ReaderFactory( TurboSqueeze::Reader::Memory ) );
     memory_writer = static_cast<TurboSqueeze::MemoryWriter*>( TurboSqueeze::WriterFactory( TurboSqueeze::Writer::Memory ) );
 
-    memory_reader->set( (char*) testoutput, testsize );
+    memory_reader->set( (char*) testoutput, compressed_size );
     memory_writer->set( (char*) testdecompressed, testsize );
 
     start = clock();
@@ -150,11 +175,12 @@ int main( int argc, const char** argv )
         test();
     else
     {
-        printf("turbosqueeze v1.0\n"
+        printf("TurboSqueeze v1.0\n"
         "(C) 2024, Julien Perrier-cornet. Free software under the BSD 3-clause License.\n"
         "\n"
-        "To compress: turbosqueeze -c:0..4 input output\n"
-        "To decompress: turbosqueeze -d input output\n"
+        "To compress: tsq -c:0..4 input output\n"
+        "To decompress: tsq -d input output\n"
+        "Test/Benchmark: tsq -t\n"
         );
         return 1;
     }
