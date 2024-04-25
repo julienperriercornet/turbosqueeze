@@ -34,6 +34,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "turbosqueeze.h"
 #include <cstring> // for memset
+#include <cassert> // for assert
 
 
 #if _MSC_VER
@@ -96,13 +97,21 @@ namespace TurboSqueeze {
         *bufferStart = 0;
 
         if (!infile)
-            infile = new std::ifstream(filename, std::ios::binary | std::ios::ate);
+            infile = fopen(filename, "rb");
 
-        if (!infile || !infile->is_open()) return 0;
+        if (!infile) return 0;
 
-        infile->read(*buffer, bufferSize);
+        if (!memory)
+        {
+        	memory = new uint8_t[TURBOSQUEEZE_OUTPUT_SZ];
+        	size = TURBOSQUEEZE_OUTPUT_SZ;
+        }
 
-        return infile->gcount();
+        if (!memory || bufferSize>=size) return 0;
+
+        *buffer = (char*) memory;
+
+        return fread( *buffer, 1, bufferSize, infile );
     }
 
     size_t MemoryReader::read(char** buffer, size_t *bufferStart, size_t bufferSize)
@@ -132,9 +141,11 @@ namespace TurboSqueeze {
 
     void FileWriter::write( size_t dataSize )
     {
-        if (!outfile) outfile = new std::ofstream(filename, std::ios::binary);
-        if (!outfile || !outfile->is_open()) return;
-        outfile->write((const char*) buffer, dataSize);
+        assert(dataSize <= TURBOSQUEEZE_OUTPUT_SZ);
+        if (!outfile) outfile = fopen(filename, "wb");
+        if (!outfile) return;
+        size_t writen = fwrite((const char*) buffer, 1, dataSize, outfile);
+        assert( writen == dataSize );
     }
 
     void MemoryWriter::getdest(char** data, size_t dataSize)
@@ -332,6 +343,8 @@ namespace TurboSqueeze {
         uint32_t last_i = i;
         uint32_t rep_last_i = i;
         uint8_t *outptr = outputBlock;
+
+        static uint32_t block;
 
         while (i < size)
         {
@@ -641,11 +654,12 @@ namespace TurboSqueeze {
     {
         if (!isLittleEndian())
             return new BigEndianDecompressor();
-#ifdef AVX2
+
+        #if 0
         return new AVX2Decompressor();
-#else
+		#else
         return new LittleEndianDecompressor();
-#endif
+		#endif
     }
 
     void DecompressorDestroy( IDecompressor* decompressor )
@@ -691,6 +705,8 @@ namespace TurboSqueeze {
 
         *outputSize = 0;
 
+        static uint32_t block;
+
         // Corrupt data?
         if (size > TURBOSQUEEZE_BLOCK_SZ) return;
 
@@ -701,7 +717,8 @@ namespace TurboSqueeze {
             uint8_t ctrl_byte = inputBlock[i]; i++;
             uint32_t ctrl_mask = 1 << 7;
 
-            while (ctrl_mask)
+			#pragma unroll 4
+			for (uint32_t k=0; k<4; k++)
             {
                 uint32_t base = j;
 
@@ -738,6 +755,8 @@ namespace TurboSqueeze {
                 ctrl_mask >>= 1;
             }
         }
+
+        block++;
 
         *outputSize = size;
     }

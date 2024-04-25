@@ -48,8 +48,8 @@ void compress( const char* infilename, const char* outfilename, uint32_t compres
     auto file_reader = static_cast<TurboSqueeze::FileReader*>( TurboSqueeze::ReaderFactory( TurboSqueeze::Reader::File ) );
     auto file_writer = static_cast<TurboSqueeze::FileWriter*>( TurboSqueeze::WriterFactory( TurboSqueeze::Writer::File ) );
 
-    file_reader->set( std::string(infilename) );
-    file_writer->set( std::string(outfilename) );
+    file_reader->set( infilename );
+    file_writer->set( outfilename );
 
     compression_ctx->compress( *file_reader, *file_writer );
 
@@ -66,11 +66,11 @@ void decompress( const char* infilename, const char* outfilename )
     clock_t start = clock();
 
     auto decompression_ctx = TurboSqueeze::DecompressorFactory();
-    auto file_reader = static_cast<TurboSqueeze::FileReader*>( TurboSqueeze::ReaderFactory( TurboSqueeze::Reader::Memory ) );
-    auto file_writer = static_cast<TurboSqueeze::FileWriter*>( TurboSqueeze::WriterFactory( TurboSqueeze::Writer::Memory ) );
+    auto file_reader = static_cast<TurboSqueeze::FileReader*>( TurboSqueeze::ReaderFactory( TurboSqueeze::Reader::File ) );
+    auto file_writer = static_cast<TurboSqueeze::FileWriter*>( TurboSqueeze::WriterFactory( TurboSqueeze::Writer::File ) );
 
-    file_reader->set( std::string(infilename) );
-    file_writer->set( std::string(outfilename) );
+    file_reader->set( infilename );
+    file_writer->set( outfilename );
 
     decompression_ctx->decompress( *file_reader, *file_writer );
 
@@ -175,7 +175,7 @@ int main( int argc, const char** argv )
         test();
     else
     {
-        printf("TurboSqueeze v1.0\n"
+        printf("TurboSqueeze v0.5\n"
         "(C) 2024, Julien Perrier-cornet. Free software under the BSD 3-clause License.\n"
         "\n"
         "To compress: tsq -c:0..4 input output\n"

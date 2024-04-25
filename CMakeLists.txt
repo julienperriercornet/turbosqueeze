@@ -4,7 +4,7 @@ option(AVX2 "Build with Avx2 optimisations" OFF)
 
 project(
     libturbosqueeze
-    VERSION 1.0
+    VERSION 0.5
     LANGUAGES CXX)
 
 include(CTest)

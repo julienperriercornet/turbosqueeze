@@ -75,13 +75,15 @@ namespace TurboSqueeze {
 
     // File Reader declaration
     class FileReader : public IReader {
-        std::string filename;
-        std::ifstream *infile;
+        const char *filename;
+        FILE *infile;
+        uint8_t* memory;
+        size_t size;
     public:
-        FileReader() : filename(), infile(nullptr) {}
-        bool eof() override { return infile != nullptr && !infile->good(); }
-        void set(const std::string& file) { filename = file; }
-        size_t getpos() override { if (infile) { return infile->tellg(); } else return 0; }
+        FileReader() : filename(), infile(nullptr), memory(nullptr), size(0) {}
+        bool eof() override { return feof(infile); }
+        void set(const char* file) { filename = file; }
+        size_t getpos() override { if (infile) { return ftell(infile); } else return 0; }
         size_t read(char** buffer, size_t *bufferStart, size_t bufferSize) override;
     };
 
@@ -100,15 +102,15 @@ namespace TurboSqueeze {
 
     // File Writer declaration
     class FileWriter : public IWriter {
-        std::string filename;
-        std::ofstream *outfile;
+        const char *filename;
+        FILE *outfile;
         uint8_t *buffer;
         size_t bufferSize;
     public:
-        FileWriter() : filename(), outfile(nullptr), buffer(nullptr), bufferSize(0) {}
-        void set(const std::string& file) { filename = file; }
+        FileWriter() : filename(nullptr), outfile(nullptr), buffer(nullptr), bufferSize(0) {}
+        void set(const char* file) { filename = file; }
         void getdest(char** data, size_t size) override;
-        size_t getpos() override { if (outfile) { return outfile->tellp(); } else return 0; }
+        size_t getpos() override { if (outfile) { return ftell(outfile); } else return 0; }
         void write(size_t dataSize) override;
     };
 
