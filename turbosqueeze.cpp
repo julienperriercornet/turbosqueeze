@@ -46,10 +46,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #endif
 
 
-#define MAX_CACHE_LINE_SIZE 256
+#define MAX_CACHE_LINE_SIZE 128
 
 
-#define TURBOSQUEEZE_BLOCK_BITS (18)
+#define TURBOSQUEEZE_BLOCK_BITS (17)
 #define TURBOSQUEEZE_BLOCK_SZ (1<<TURBOSQUEEZE_BLOCK_BITS)
 #define TURBOSQUEEZE_OUTPUT_SZ ((1<<TURBOSQUEEZE_BLOCK_BITS) + (1<<(TURBOSQUEEZE_BLOCK_BITS-2)))
 
@@ -114,6 +114,12 @@ namespace TurboSqueeze {
         return fread( *buffer, 1, bufferSize, infile );
     }
 
+    FileReader::~FileReader()
+    {
+    	if (infile) fclose(infile);
+    	delete [] memory;
+    }
+
     size_t MemoryReader::read(char** buffer, size_t *bufferStart, size_t bufferSize)
     {
         size_t remaining = memorySize - currentPosition;
@@ -126,12 +132,14 @@ namespace TurboSqueeze {
         return bytesToRead;
     }
 
+    MemoryReader::~MemoryReader()
+    {
+    }
+
     // Writer
     void FileWriter::getdest(char** data, size_t size)
     {
         if (!buffer) buffer = new uint8_t[TURBOSQUEEZE_OUTPUT_SZ];
-
-        bufferSize = size;
 
         if (size <= TURBOSQUEEZE_OUTPUT_SZ)
             *data = (char*) buffer;
@@ -141,11 +149,15 @@ namespace TurboSqueeze {
 
     void FileWriter::write( size_t dataSize )
     {
-        assert(dataSize <= TURBOSQUEEZE_OUTPUT_SZ);
         if (!outfile) outfile = fopen(filename, "wb");
         if (!outfile) return;
         size_t writen = fwrite((const char*) buffer, 1, dataSize, outfile);
-        assert( writen == dataSize );
+    }
+
+    FileWriter::~FileWriter()
+    {
+    	if (outfile) fclose(outfile);
+    	delete [] buffer;
     }
 
     void MemoryWriter::getdest(char** data, size_t dataSize)
@@ -166,6 +178,10 @@ namespace TurboSqueeze {
     void MemoryWriter::write( size_t dataSize )
     {
         currentPosition += dataSize;
+    }
+
+    MemoryWriter::~MemoryWriter()
+    {
     }
 
     // Compressor declaration and factory
@@ -206,7 +222,7 @@ namespace TurboSqueeze {
 
     class ICompressor* CompressorFactory( uint32_t compression_level )
     {
-        if (compression_level>0 && compression_level<=4)
+        if (compression_level>0 && compression_level<=10)
             return new FastNCompressor( compression_level );
 
         return new FastCompressor( 0 );
@@ -507,11 +523,11 @@ namespace TurboSqueeze {
         return false;
     }
 
-    FastNCompressor::FastNCompressor( uint32_t compression_level ) : ICompressor( compression_level )
+    FastNCompressor::FastNCompressor( uint32_t c_level ) : ICompressor( c_level<11? 1<<c_level:1<<10 )
     {
         refhashcount = (uint8_t*) align_alloc( MAX_CACHE_LINE_SIZE, TURBOSQUEEZE_REFHASH_PLUS_SZ*sizeof(uint8_t) );
         hash = (FastNCompressor::SymRef*) align_alloc( MAX_CACHE_LINE_SIZE, TURBOSQUEEZE_REFHASH_PLUS_SZ*TURBOSQUEEZE_REFHASH_ENTITIES*sizeof(FastNCompressor::SymRef) );
-        positions = (uint32_t*) align_alloc( MAX_CACHE_LINE_SIZE, TURBOSQUEEZE_MAX_SYMS*compression_level*8*sizeof(uint32_t) );
+        positions = (uint32_t*) align_alloc( MAX_CACHE_LINE_SIZE, TURBOSQUEEZE_MAX_SYMS*compressionLevel*sizeof(uint32_t) );
     }
 
     FastNCompressor::~FastNCompressor()
@@ -562,14 +578,14 @@ namespace TurboSqueeze {
                         positions[pos] = firstpos;
                         positions[pos+1] = i;
 
-                        posIdx += compressionLevel*8;
+                        posIdx += compressionLevel;
 
                         return true;
                     }
                 }
                 else
                 {
-                    uint32_t n_occ = hash[hitidx].n_occurences > compressionLevel*8 ? compressionLevel*8 : hash[hitidx].n_occurences;
+                    uint32_t n_occ = hash[hitidx].n_occurences > compressionLevel ? compressionLevel : hash[hitidx].n_occurences;
                     uint32_t pos = hash[hitidx].position;
                     uint32_t maxmatchlength = 0;
                     uint32_t maxmatchpos = 0xFFFFFFFF;
@@ -585,12 +601,16 @@ namespace TurboSqueeze {
                                 maxmatchlength = matchlength;
                                 maxmatchpos = positions[pos+k];
                             }
+                            else if (matchlength == maxmatchlength && positions[pos+k] > maxmatchpos)
+                            {
+                                maxmatchpos = positions[pos+k];
+                            }
                         }
                     }
 
                     if (maxmatchlength >= 4)
                     {
-                        positions[pos+(hash[hitidx].n_occurences%(compressionLevel*8))] = i;
+                        positions[pos+(hash[hitidx].n_occurences%compressionLevel)] = i;
                         hash[hitidx].n_occurences++;
 
                         hitlength = maxmatchlength;
@@ -687,10 +707,9 @@ namespace TurboSqueeze {
                 if (to_read > 0 && to_read < TURBOSQUEEZE_OUTPUT_SZ && ((to_read-6) == reader.read((char**) &inbuff, &i, to_read-6)))
                 {
                     uint8_t *out;
+
                     writer.getdest( (char**) &out, size );
-
                     decode( inbuff+i, out, &size, to_read );
-
                     writer.write(size);
                 }
             }
@@ -704,8 +723,6 @@ namespace TurboSqueeze {
         uint32_t size = *outputSize;
 
         *outputSize = 0;
-
-        static uint32_t block;
 
         // Corrupt data?
         if (size > TURBOSQUEEZE_BLOCK_SZ) return;
@@ -755,8 +772,6 @@ namespace TurboSqueeze {
                 ctrl_mask >>= 1;
             }
         }
-
-        block++;
 
         *outputSize = size;
     }

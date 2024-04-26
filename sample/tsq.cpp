@@ -178,7 +178,7 @@ int main( int argc, const char** argv )
         printf("TurboSqueeze v0.5\n"
         "(C) 2024, Julien Perrier-cornet. Free software under the BSD 3-clause License.\n"
         "\n"
-        "To compress: tsq -c:0..4 input output\n"
+        "To compress: tsq -c:0..10 input output\n"
         "To decompress: tsq -d input output\n"
         "Test/Benchmark: tsq -t\n"
         );
