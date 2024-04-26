@@ -31,6 +31,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#include <cassert>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -90,8 +91,14 @@ void test()
     uint8_t* testoutput = new uint8_t [testsize+testsize/4];
     uint8_t* testdecompressed = new uint8_t [testsize];
 
+    if (testinput == nullptr || testoutput == nullptr || testdecompressed == nullptr)
+    {
+    	printf( "Sorry, your system doesn't have enough memory to run the test/benchmark mode (%uMB required)\n", 3*(testsize>>20)+(testsize>>22) );
+    	return;
+    }
+
     for (uint32_t i=0; i<testsize; i++)
-        testinput[i] = i & 0xF;
+        testinput[i] = i & 0xFF;
 
     // Compress at level 0
     auto compression_ctx = TurboSqueeze::CompressorFactory( 0 );
@@ -105,7 +112,8 @@ void test()
 
     compression_ctx->compress( *memory_reader, *memory_writer );
 
-    printf("Compression level 0 in %.3fs\n", double(clock()-start) / CLOCKS_PER_SEC );
+    double seconds = double(clock()-start) / CLOCKS_PER_SEC;
+    printf("Compression level 0 in %.3fs (%.3fMB/s)\n", seconds, testsize*0.000001/seconds );
 
     TurboSqueeze::WriterDestroy( memory_writer );
     memory_writer = nullptr;
@@ -114,8 +122,8 @@ void test()
     TurboSqueeze::CompressorDestroy( compression_ctx );
     compression_ctx = nullptr;
 
-    // Compress at level 1
-    compression_ctx = TurboSqueeze::CompressorFactory( 1 );
+    // Compress at level 10
+    compression_ctx = TurboSqueeze::CompressorFactory( 10 );
     memory_reader = static_cast<TurboSqueeze::MemoryReader*>( TurboSqueeze::ReaderFactory( TurboSqueeze::Reader::Memory ) );
     memory_writer = static_cast<TurboSqueeze::MemoryWriter*>( TurboSqueeze::WriterFactory( TurboSqueeze::Writer::Memory ) );
 
@@ -126,7 +134,8 @@ void test()
 
     compression_ctx->compress( *memory_reader, *memory_writer );
 
-    printf("Compression level 1 in %.3fs\n", double(clock()-start) / CLOCKS_PER_SEC );
+    seconds = double(clock()-start) / CLOCKS_PER_SEC;
+    printf("Compression level 10 in %.3fs (%.3fMB/s)\n", seconds, testsize*0.000001/seconds );
 
     size_t compressed_size = memory_writer->getpos();
 
@@ -149,13 +158,20 @@ void test()
 
     decompression_ctx->decompress( *memory_reader, *memory_writer );
 
-    printf("Decompression in %.3fs\n", double(clock()-start) / CLOCKS_PER_SEC );
+    seconds = double(clock()-start) / CLOCKS_PER_SEC;
+    printf("Decompression in %.3fs (%.3fMB/s)\n", seconds, testsize*0.000001/seconds );
     TurboSqueeze::WriterDestroy( memory_writer );
     memory_writer = nullptr;
     TurboSqueeze::ReaderDestroy( memory_reader );
     memory_reader = nullptr;
     TurboSqueeze::DecompressorDestroy( decompression_ctx );
     decompression_ctx = nullptr;
+
+    // Verify that the decompressed data is identical
+    for (uint32_t i=0; i<testsize; i++)
+    {
+    	assert( testinput[i] == testdecompressed[i] );
+    }
 
     delete [] testdecompressed;
     delete [] testoutput;

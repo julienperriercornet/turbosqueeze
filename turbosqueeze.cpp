@@ -600,6 +600,8 @@ namespace TurboSqueeze {
                             {
                                 maxmatchlength = matchlength;
                                 maxmatchpos = positions[pos+k];
+
+                                if (maxmatchlength == 16) break;
                             }
                             else if (matchlength == maxmatchlength && positions[pos+k] > maxmatchpos)
                             {
@@ -675,7 +677,7 @@ namespace TurboSqueeze {
         if (!isLittleEndian())
             return new BigEndianDecompressor();
 
-        #if 0
+        #ifdef AVX2
         return new AVX2Decompressor();
 		#else
         return new LittleEndianDecompressor();
