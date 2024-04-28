@@ -1,5 +1,5 @@
 /*
-libturbosqueeze turbosqueeze sample/test console application.
+TurboSqueeze console application.
 
 BSD 3-Clause License
 
@@ -54,11 +54,11 @@ void compress( const char* infilename, const char* outfilename, uint32_t compres
 
     compression_ctx->compress( *file_reader, *file_writer );
 
+    printf("%s (%zu) -> %s (%zu) in %.3fs\n", infilename, file_reader->getpos(), outfilename, file_writer->getpos(), double(clock()-start) / CLOCKS_PER_SEC );
+
     TurboSqueeze::WriterDestroy( file_writer );
     TurboSqueeze::ReaderDestroy( file_reader );
     TurboSqueeze::CompressorDestroy( compression_ctx );
-
-    printf("%s -> %s in %.3fs\n", infilename, outfilename, double(clock()-start) / CLOCKS_PER_SEC );
 }
 
 
@@ -75,11 +75,11 @@ void decompress( const char* infilename, const char* outfilename )
 
     decompression_ctx->decompress( *file_reader, *file_writer );
 
+    printf("%s (%zu) -> %s (%zu) in %.3fs\n", infilename, file_reader->getpos(), outfilename, file_writer->getpos(), double(clock()-start) / CLOCKS_PER_SEC );
+
     TurboSqueeze::WriterDestroy( file_writer );
     TurboSqueeze::ReaderDestroy( file_reader );
     TurboSqueeze::DecompressorDestroy( decompression_ctx );
-
-    printf("%s -> %s in %.3fs\n", infilename, outfilename, double(clock()-start) / CLOCKS_PER_SEC );
 }
 
 

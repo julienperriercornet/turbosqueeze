@@ -141,7 +141,7 @@ namespace TurboSqueeze {
     {
         if (!buffer) buffer = new uint8_t[TURBOSQUEEZE_OUTPUT_SZ];
 
-        if (size <= TURBOSQUEEZE_OUTPUT_SZ)
+        if (buffer !=nullptr && size <= TURBOSQUEEZE_OUTPUT_SZ)
             *data = (char*) buffer;
         else
             *data = nullptr;
@@ -274,18 +274,21 @@ namespace TurboSqueeze {
                 i += entryBuffer[j*2].size;
             }
 
-            if (entryBuffer[j*2+1].repeat)
+            if (((j*2+1) < (*entryPos)))
             {
-                uint32_t offset = entryBuffer[j*2].base - entryBuffer[j*2+1].position;
-                outptr[i] = offset & 0xFF;
-                outptr[i+1] = (offset >> 8) & 0xFF;
-                i += 2;
-            }
-            else
-            {
-                turbosqueeze_memcpy8( &outptr[i], &input[entryBuffer[j*2+1].position] );
-                turbosqueeze_memcpy8( &outptr[i+8], &input[entryBuffer[j*2+1].position+8] );
-                i += entryBuffer[j*2+1].size;
+                if (entryBuffer[j*2+1].repeat)
+                {
+                    uint32_t offset = entryBuffer[j*2].base - entryBuffer[j*2+1].position;
+                    outptr[i] = offset & 0xFF;
+                    outptr[i+1] = (offset >> 8) & 0xFF;
+                    i += 2;
+                }
+                else
+                {
+                    turbosqueeze_memcpy8( &outptr[i], &input[entryBuffer[j*2+1].position] );
+                    turbosqueeze_memcpy8( &outptr[i+8], &input[entryBuffer[j*2+1].position+8] );
+                    i += entryBuffer[j*2+1].size;
+                }
             }
         }
 
@@ -698,21 +701,22 @@ namespace TurboSqueeze {
 
             if (reader.read((char**) &inbuff, &i, 6) == 6)
             {
-                uint32_t to_read = inbuff[i++];
-                to_read += inbuff[i++] << 8;
-                to_read += inbuff[i++] << 16;
+                uint32_t to_read = inbuff[i];
+                to_read += inbuff[i+1] << 8;
+                to_read += inbuff[i+2] << 16;
 
-                uint32_t size = inbuff[i++];
-                size += inbuff[i++] << 8;
-                size += inbuff[i++] << 16;
+                uint32_t size = inbuff[i+3];
+                size += inbuff[i+4] << 8;
+                size += inbuff[i+5] << 16;
 
                 if (to_read > 0 && to_read < TURBOSQUEEZE_OUTPUT_SZ && ((to_read-6) == reader.read((char**) &inbuff, &i, to_read-6)))
                 {
                     uint8_t *out;
+                    uint32_t outputSize = size;
 
                     writer.getdest( (char**) &out, size );
-                    decode( inbuff+i, out, &size, to_read );
-                    writer.write(size);
+                    decode( inbuff, out, &outputSize, to_read );
+                    writer.write( outputSize );
                 }
             }
         }
