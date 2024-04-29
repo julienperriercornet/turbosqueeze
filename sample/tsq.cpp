@@ -46,13 +46,10 @@ void compress( const char* infilename, const char* outfilename, uint32_t compres
     clock_t start = clock();
 
     auto compression_ctx = TurboSqueeze::CompressorFactory( compression_level );
-    auto file_reader = static_cast<TurboSqueeze::FileReader*>( TurboSqueeze::ReaderFactory( TurboSqueeze::Reader::File ) );
-    auto file_writer = static_cast<TurboSqueeze::FileWriter*>( TurboSqueeze::WriterFactory( TurboSqueeze::Writer::File ) );
+    auto file_reader = TurboSqueeze::FileReaderFactory( infilename );
+    auto file_writer = TurboSqueeze::FileWriterFactory( outfilename );
 
-    file_reader->set( infilename );
-    file_writer->set( outfilename );
-
-    compression_ctx->compress( *file_reader, *file_writer );
+    compression_ctx->compress( file_reader, file_writer );
 
     printf("%s (%zu) -> %s (%zu) in %.3fs\n", infilename, file_reader->getpos(), outfilename, file_writer->getpos(), double(clock()-start) / CLOCKS_PER_SEC );
 
@@ -67,13 +64,10 @@ void decompress( const char* infilename, const char* outfilename )
     clock_t start = clock();
 
     auto decompression_ctx = TurboSqueeze::DecompressorFactory();
-    auto file_reader = static_cast<TurboSqueeze::FileReader*>( TurboSqueeze::ReaderFactory( TurboSqueeze::Reader::File ) );
-    auto file_writer = static_cast<TurboSqueeze::FileWriter*>( TurboSqueeze::WriterFactory( TurboSqueeze::Writer::File ) );
+    auto file_reader = TurboSqueeze::FileReaderFactory( infilename );
+    auto file_writer = TurboSqueeze::FileWriterFactory( outfilename );
 
-    file_reader->set( infilename );
-    file_writer->set( outfilename );
-
-    decompression_ctx->decompress( *file_reader, *file_writer );
+    decompression_ctx->decompress( file_reader, file_writer );
 
     printf("%s (%zu) -> %s (%zu) in %.3fs\n", infilename, file_reader->getpos(), outfilename, file_writer->getpos(), double(clock()-start) / CLOCKS_PER_SEC );
 
@@ -102,15 +96,12 @@ void test()
 
     // Compress at level 0
     auto compression_ctx = TurboSqueeze::CompressorFactory( 0 );
-    auto memory_reader = static_cast<TurboSqueeze::MemoryReader*>( TurboSqueeze::ReaderFactory( TurboSqueeze::Reader::Memory ) );
-    auto memory_writer = static_cast<TurboSqueeze::MemoryWriter*>( TurboSqueeze::WriterFactory( TurboSqueeze::Writer::Memory ) );
-
-    memory_reader->set( (char*) testinput, testsize );
-    memory_writer->set( (char*) testoutput, testsize+testsize/4 );
+    auto memory_reader = TurboSqueeze::MemoryReaderFactory( (char*) testinput, testsize );
+    auto memory_writer = TurboSqueeze::MemoryWriterFactory( (char*) testoutput, testsize+testsize/4 );
 
     clock_t start = clock();
 
-    compression_ctx->compress( *memory_reader, *memory_writer );
+    compression_ctx->compress( memory_reader, memory_writer );
 
     double seconds = double(clock()-start) / CLOCKS_PER_SEC;
     printf("Compression level 0 in %.3fs (%.3fMB/s)\n", seconds, testsize*0.000001/seconds );
@@ -124,15 +115,12 @@ void test()
 
     // Compress at level 10
     compression_ctx = TurboSqueeze::CompressorFactory( 10 );
-    memory_reader = static_cast<TurboSqueeze::MemoryReader*>( TurboSqueeze::ReaderFactory( TurboSqueeze::Reader::Memory ) );
-    memory_writer = static_cast<TurboSqueeze::MemoryWriter*>( TurboSqueeze::WriterFactory( TurboSqueeze::Writer::Memory ) );
-
-    memory_reader->set( (char*) testinput, testsize );
-    memory_writer->set( (char*) testoutput, testsize+testsize/4 );
+    memory_reader = TurboSqueeze::MemoryReaderFactory( (char*) testinput, testsize );
+    memory_writer = TurboSqueeze::MemoryWriterFactory( (char*) testoutput, testsize+testsize/4 );
 
     start = clock();
 
-    compression_ctx->compress( *memory_reader, *memory_writer );
+    compression_ctx->compress( memory_reader, memory_writer );
 
     seconds = double(clock()-start) / CLOCKS_PER_SEC;
     printf("Compression level 10 in %.3fs (%.3fMB/s)\n", seconds, testsize*0.000001/seconds );
@@ -148,15 +136,12 @@ void test()
 
     // Decompress
     auto decompression_ctx = TurboSqueeze::DecompressorFactory();
-    memory_reader = static_cast<TurboSqueeze::MemoryReader*>( TurboSqueeze::ReaderFactory( TurboSqueeze::Reader::Memory ) );
-    memory_writer = static_cast<TurboSqueeze::MemoryWriter*>( TurboSqueeze::WriterFactory( TurboSqueeze::Writer::Memory ) );
-
-    memory_reader->set( (char*) testoutput, compressed_size );
-    memory_writer->set( (char*) testdecompressed, testsize );
+    memory_reader = TurboSqueeze::MemoryReaderFactory( (char*) testoutput, compressed_size );
+    memory_writer = TurboSqueeze::MemoryWriterFactory( (char*) testdecompressed, testsize );
 
     start = clock();
 
-    decompression_ctx->decompress( *memory_reader, *memory_writer );
+    decompression_ctx->decompress( memory_reader, memory_writer );
 
     seconds = double(clock()-start) / CLOCKS_PER_SEC;
     printf("Decompression in %.3fs (%.3fMB/s)\n", seconds, testsize*0.000001/seconds );
@@ -167,7 +152,7 @@ void test()
     TurboSqueeze::DecompressorDestroy( decompression_ctx );
     decompression_ctx = nullptr;
 
-    // Verify that the decompressed data is identical
+    // Verify that the decompressed data is identical to the source
     for (uint32_t i=0; i<testsize; i++)
     {
     	assert( testinput[i] == testdecompressed[i] );

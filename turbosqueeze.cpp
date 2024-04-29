@@ -67,26 +67,40 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 namespace TurboSqueeze {
 
 
-    IReader* ReaderFactory( const enum Reader type )
+	FileReader* FileReaderFactory( const char *filename )
     {
-        if (type == Reader::File) return new FileReader();
-        else if (type == Reader::Memory) return new MemoryReader();
-        return nullptr;
+		FileReader* reader = new FileReader();
+        if (reader) reader->set( filename );
+        return reader;
     }
 
-    void ReaderDestroy( IReader* reader )
+	MemoryReader* MemoryReaderFactory( char* buffer, size_t size )
+    {
+		MemoryReader* reader = new MemoryReader();
+        if (reader) reader->set( buffer, size );
+        return reader;
+    }
+
+	void ReaderDestroy( IReader* reader )
     {
         delete reader;
     }
 
-    IWriter* WriterFactory( const enum Writer type )
+	FileWriter* FileWriterFactory( const char *filename )
     {
-        if (type == Writer::File) return new FileWriter();
-        else if (type == Writer::Memory) return new MemoryWriter();
-        return nullptr;
+		FileWriter* writer = new FileWriter();
+        if (writer) writer->set( filename );
+        return writer;
     }
 
-    void WriterDestroy( IWriter* writer )
+	MemoryWriter* MemoryWriterFactory( char* buffer, size_t size )
+    {
+		MemoryWriter* writer = new MemoryWriter();
+        if (writer) writer->set( buffer, size );
+        return writer;
+    }
+
+	void WriterDestroy( IWriter* writer )
     {
         delete writer;
     }
@@ -314,19 +328,21 @@ namespace TurboSqueeze {
     }
 
     // Compression method
-    void ICompressor::compress(IReader& reader, IWriter& writer)
+    void ICompressor::compress(IReader* reader, IWriter* writer)
     {
-        do
+    	if (reader == nullptr || writer == nullptr) return;
+
+    	do
         {
             uint8_t *inbuff;
             size_t i;
 
-            size_t input_sz = reader.read((char**) &inbuff, &i, TURBOSQUEEZE_BLOCK_SZ);
+            size_t input_sz = reader->read((char**) &inbuff, &i, TURBOSQUEEZE_BLOCK_SZ);
 
             if (input_sz > 0)
             {
                 uint8_t *outbuff;
-                writer.getdest( (char**) &outbuff, TURBOSQUEEZE_OUTPUT_SZ );
+                writer->getdest( (char**) &outbuff, TURBOSQUEEZE_OUTPUT_SZ );
 
                 uint32_t outputSize = 0;
                 encode( inbuff+i, outbuff+3, &outputSize, input_sz );
@@ -335,10 +351,10 @@ namespace TurboSqueeze {
                 outbuff[1] = ((outputSize >> 8) & 0xFF);
                 outbuff[2] = ((outputSize >> 16) & 0xFF);
 
-                writer.write(outputSize);
+                writer->write(outputSize);
             }
         }
-        while ( !reader.eof() ) ;
+        while ( !reader->eof() ) ;
     }
 
     void ICompressor::encode( uint8_t *inputBlock, uint8_t *outputBlock, uint32_t *outputSize, uint32_t inputSize )
@@ -531,6 +547,7 @@ namespace TurboSqueeze {
         refhashcount = (uint8_t*) align_alloc( MAX_CACHE_LINE_SIZE, TURBOSQUEEZE_REFHASH_PLUS_SZ*sizeof(uint8_t) );
         hash = (FastNCompressor::SymRef*) align_alloc( MAX_CACHE_LINE_SIZE, TURBOSQUEEZE_REFHASH_PLUS_SZ*TURBOSQUEEZE_REFHASH_ENTITIES*sizeof(FastNCompressor::SymRef) );
         positions = (uint32_t*) align_alloc( MAX_CACHE_LINE_SIZE, TURBOSQUEEZE_MAX_SYMS*compressionLevel*sizeof(uint32_t) );
+        posIdx = 0;
     }
 
     FastNCompressor::~FastNCompressor()
@@ -692,14 +709,16 @@ namespace TurboSqueeze {
         delete decompressor;
     }
 
-    void IDecompressor::decompress(IReader& reader, IWriter& writer)
+    void IDecompressor::decompress(IReader* reader, IWriter* writer)
     {
-        do
+    	if (reader == nullptr || writer == nullptr) return;
+
+    	do
         {
             uint8_t *inbuff;
             size_t i;
 
-            if (reader.read((char**) &inbuff, &i, 6) == 6)
+            if (reader->read((char**) &inbuff, &i, 6) == 6)
             {
                 uint32_t to_read = inbuff[i];
                 to_read += inbuff[i+1] << 8;
@@ -709,18 +728,19 @@ namespace TurboSqueeze {
                 size += inbuff[i+4] << 8;
                 size += inbuff[i+5] << 16;
 
-                if (to_read > 0 && to_read < TURBOSQUEEZE_OUTPUT_SZ && ((to_read-6) == reader.read((char**) &inbuff, &i, to_read-6)))
+                if (to_read > 0 && to_read < TURBOSQUEEZE_OUTPUT_SZ && ((to_read-6) == reader->read((char**) &inbuff, &i, to_read-6)))
                 {
                     uint8_t *out;
                     uint32_t outputSize = size;
 
-                    writer.getdest( (char**) &out, size );
+                    writer->getdest( (char**) &out, size );
                     decode( inbuff, out, &outputSize, to_read );
-                    writer.write( outputSize );
+                    assert( size == outputSize );
+                    writer->write( outputSize );
                 }
             }
         }
-        while ( !reader.eof() ) ;
+        while ( !reader->eof() ) ;
     }
 
     // Decompressor

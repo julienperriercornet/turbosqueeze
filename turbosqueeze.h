@@ -52,9 +52,6 @@ namespace TurboSqueeze {
         virtual bool eof() = 0;
     };
 
-    enum class Reader { File, Memory };
-
-    IReader* ReaderFactory( const enum Reader type );
     void ReaderDestroy( IReader* reader );
 
     /*
@@ -68,9 +65,6 @@ namespace TurboSqueeze {
         virtual void write(size_t dataSize) = 0;
     };
 
-    enum class Writer { File, Memory };
-
-    IWriter* WriterFactory( const enum Writer type );
     void WriterDestroy( IWriter* writer );
 
     // File Reader declaration
@@ -88,6 +82,8 @@ namespace TurboSqueeze {
         size_t read(char** buffer, size_t *bufferStart, size_t bufferSize) override;
     };
 
+    FileReader* FileReaderFactory( const char* filename );
+
     // Memory Reader declaration
     class MemoryReader : public IReader {
         char* memoryData;
@@ -102,6 +98,8 @@ namespace TurboSqueeze {
         size_t read(char** buffer, size_t *bufferStart, size_t bufferSize) override;
     };
 
+    MemoryReader* MemoryReaderFactory( char* buffer, size_t size );
+
     // File Writer declaration
     class FileWriter : public IWriter {
         const char *filename;
@@ -115,6 +113,8 @@ namespace TurboSqueeze {
         size_t getpos() override { if (outfile) { return ftell(outfile); } else return 0; }
         void write(size_t dataSize) override;
     };
+
+    FileWriter* FileWriterFactory( const char* file );
 
     // Memory Writer declaration
     class MemoryWriter : public IWriter {
@@ -132,6 +132,8 @@ namespace TurboSqueeze {
         bool isOverflow() const { return overflow; }
     };
 
+    MemoryWriter* MemoryWriterFactory( char* data, size_t size );
+
     /*
      * Compressor interface
      */
@@ -144,7 +146,7 @@ namespace TurboSqueeze {
     public:
         ICompressor( uint32_t compression_level ) : compressionLevel( compression_level ) {}
         virtual ~ICompressor() {}
-        void compress(IReader& reader, IWriter& writer);
+        void compress(IReader* reader, IWriter* writer);
     };
 
     ICompressor* CompressorFactory( uint32_t compression_level );
@@ -159,7 +161,7 @@ namespace TurboSqueeze {
         void decodeFinalSafeInternal( uint8_t *inbuff, uint8_t *outbuff, uint32_t *outputSize, uint32_t inputSize );
     public:
         virtual ~IDecompressor() {}
-        void decompress(IReader& reader, IWriter& writer);
+        void decompress(IReader* reader, IWriter* writer);
     };
 
     IDecompressor* DecompressorFactory();
