@@ -293,6 +293,7 @@ namespace TurboSqueeze {
 
         *outputSize = 0;
 
+#ifdef __AVX2__
         // Corrupt data?
         if (size > TURBOSQUEEZE_BLOCK_SZ) return;
 
@@ -341,6 +342,7 @@ namespace TurboSqueeze {
         }
 
         *outputSize = size;
+#endif
     }
 
 

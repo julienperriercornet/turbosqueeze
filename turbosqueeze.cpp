@@ -49,7 +49,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define MAX_CACHE_LINE_SIZE 128
 
 
-#define TURBOSQUEEZE_BLOCK_BITS (17)
+#define TURBOSQUEEZE_BLOCK_BITS (18)
 #define TURBOSQUEEZE_BLOCK_SZ (1<<TURBOSQUEEZE_BLOCK_BITS)
 #define TURBOSQUEEZE_OUTPUT_SZ ((1<<TURBOSQUEEZE_BLOCK_BITS) + (1<<(TURBOSQUEEZE_BLOCK_BITS-2)))
 
@@ -61,10 +61,17 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define TURBOSQUEEZE_MAX_SYMS (1<<(TURBOSQUEEZE_BLOCK_BITS-3))
 
 
-#define turbosqueeze_memcpy8( A, B ) *((uint64_t*) A) = *((const uint64_t*) B)
+#define turbosqueeze_memcpy8( A, B ) *((uint64_t*) (A)) = *((const uint64_t*) (B))
 
 
 namespace TurboSqueeze {
+
+
+	static inline void turbosqueeze_memcpy16( uint8_t* dst, uint8_t* src )
+    {
+		turbosqueeze_memcpy8( dst, src );
+		turbosqueeze_memcpy8( dst+8, src+8 );
+    }
 
 
 	FileReader* FileReaderFactory( const char *filename )
@@ -125,7 +132,7 @@ namespace TurboSqueeze {
 
         *buffer = (char*) memory;
 
-        return fread( *buffer, 1, bufferSize, infile );
+        return fread( (char*) memory, 1, bufferSize, infile );
     }
 
     FileReader::~FileReader()
@@ -153,9 +160,9 @@ namespace TurboSqueeze {
     // Writer
     void FileWriter::getdest(char** data, size_t size)
     {
-        if (!buffer) buffer = new uint8_t[TURBOSQUEEZE_OUTPUT_SZ];
+        if (!buffer) buffer = (uint8_t*) align_alloc( MAX_CACHE_LINE_SIZE, TURBOSQUEEZE_OUTPUT_SZ);
 
-        if (buffer !=nullptr && size <= TURBOSQUEEZE_OUTPUT_SZ)
+        if (buffer != nullptr && size <= TURBOSQUEEZE_OUTPUT_SZ)
             *data = (char*) buffer;
         else
             *data = nullptr;
@@ -165,13 +172,13 @@ namespace TurboSqueeze {
     {
         if (!outfile) outfile = fopen(filename, "wb");
         if (!outfile) return;
-        size_t writen = fwrite((const char*) buffer, 1, dataSize, outfile);
+        size_t writen = fwrite((char*) buffer, 1, dataSize, outfile);
     }
 
     FileWriter::~FileWriter()
     {
     	if (outfile) fclose(outfile);
-    	delete [] buffer;
+        if (buffer) align_free(buffer);
     }
 
     void MemoryWriter::getdest(char** data, size_t dataSize)
@@ -283,8 +290,7 @@ namespace TurboSqueeze {
             }
             else
             {
-                turbosqueeze_memcpy8( &outptr[i], &input[entryBuffer[j*2].position] );
-                turbosqueeze_memcpy8( &outptr[i+8], &input[entryBuffer[j*2].position+8] );
+            	turbosqueeze_memcpy16( &outptr[i], &input[entryBuffer[j*2].position] );
                 i += entryBuffer[j*2].size;
             }
 
@@ -299,8 +305,7 @@ namespace TurboSqueeze {
                 }
                 else
                 {
-                    turbosqueeze_memcpy8( &outptr[i], &input[entryBuffer[j*2+1].position] );
-                    turbosqueeze_memcpy8( &outptr[i+8], &input[entryBuffer[j*2+1].position+8] );
+                	turbosqueeze_memcpy16( &outptr[i], &input[entryBuffer[j*2+1].position] );
                     i += entryBuffer[j*2+1].size;
                 }
             }
@@ -389,7 +394,7 @@ namespace TurboSqueeze {
 
             last_i = i;
 
-            // Count NoHit characters
+            // Count Litteral characters until the next match
             while ((i < size) && ((i-last_i) < 16))
             {
                 hit = addHit( inputBlock, i, rep_last_i, size, hitlength, hitpos );
@@ -474,7 +479,7 @@ namespace TurboSqueeze {
             uint8_t *strfirst = inbuff+first;
             uint8_t *strsecond = inbuff+second;
 
-            while ((i != maxmatchstrlen) && (strfirst[i] == strsecond[i])) i++;
+            while ((i < maxmatchstrlen) && (strfirst[i] == strsecond[i])) i++;
 
             return i;
         }
@@ -734,6 +739,7 @@ namespace TurboSqueeze {
                     uint32_t outputSize = size;
 
                     writer->getdest( (char**) &out, size );
+                    assert( out != nullptr );
                     decode( inbuff, out, &outputSize, to_read );
                     assert( size == outputSize );
                     writer->write( outputSize );
@@ -774,8 +780,7 @@ namespace TurboSqueeze {
 
                 uint8_t *src1 = rep1 ? &outputBlock[base-offset1] : &inputBlock[i];
 
-                turbosqueeze_memcpy8( &outputBlock[j], src1 );
-                turbosqueeze_memcpy8( &outputBlock[j+8], &src1[8] );
+                turbosqueeze_memcpy16( &outputBlock[j], src1 );
 
                 i += rep1 ? 2 : sz1;
                 j += sz1;
@@ -789,8 +794,7 @@ namespace TurboSqueeze {
 
                 uint8_t *src2 = rep2 ? &outputBlock[base-offset2] : &inputBlock[i];
 
-                turbosqueeze_memcpy8( &outputBlock[j], src2 );
-                turbosqueeze_memcpy8( &outputBlock[j+8], &src2[8] );
+                turbosqueeze_memcpy16( &outputBlock[j], src2 );
 
                 i += rep2 ? 2 : sz2;
                 j += sz2;
@@ -836,8 +840,7 @@ namespace TurboSqueeze {
 
                 uint8_t *src1 = rep1 ? &outputBlock[base-offset1] : &inputBlock[i];
 
-                turbosqueeze_memcpy8( &outputBlock[j], src1 );
-                turbosqueeze_memcpy8( &outputBlock[j+8], &src1[8] );
+                turbosqueeze_memcpy16( &outputBlock[j], src1 );
 
                 i += rep1 ? 2 : sz1;
                 j += sz1;
@@ -851,8 +854,7 @@ namespace TurboSqueeze {
 
                 uint8_t *src2 = rep2 ? &outputBlock[base-offset2] : &inputBlock[i];
 
-                turbosqueeze_memcpy8( &outputBlock[j], src2 );
-                turbosqueeze_memcpy8( &outputBlock[j+8], &src2[8] );
+                turbosqueeze_memcpy16( &outputBlock[j], src2 );
 
                 i += rep2 ? 2 : sz2;
                 j += sz2;
