@@ -733,15 +733,16 @@ namespace TurboSqueeze {
                 size += inbuff[i+4] << 8;
                 size += inbuff[i+5] << 16;
 
-                if (to_read > 0 && to_read < TURBOSQUEEZE_OUTPUT_SZ && ((to_read-6) == reader->read((char**) &inbuff, &i, to_read-6)))
+                uint8_t *compressed;
+                size_t indice;
+
+                if (to_read > 0 && to_read < TURBOSQUEEZE_OUTPUT_SZ && ((to_read-6) == reader->read((char**) &compressed, &indice, to_read-6)))
                 {
                     uint8_t *out;
                     uint32_t outputSize = size;
 
                     writer->getdest( (char**) &out, size );
-                    assert( out != nullptr );
-                    decode( inbuff, out, &outputSize, to_read );
-                    assert( size == outputSize );
+                    decode( compressed+indice, out, &outputSize, to_read );
                     writer->write( outputSize );
                 }
             }
