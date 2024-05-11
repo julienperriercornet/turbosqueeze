@@ -452,7 +452,7 @@ namespace TurboSqueeze {
         // Finalize stream
         j += writeOutput( &entryBuffer[0], &entryPos, outptr+j, inputBlock, true, j );
 
-        *outputSize = j;
+        *outputSize += j;
     }
 
     static inline uint32_t getHash( uint32_t h )
