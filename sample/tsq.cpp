@@ -77,6 +77,9 @@ void decompress( const char* infilename, const char* outfilename )
 }
 
 
+/*
+** Test cases: Compress memory to memory, decompress memory to memory. Used as a benchmark because we have no file IO overhead.
+*/
 void test()
 {
     const uint32_t testsize = 1<<30;
@@ -103,6 +106,8 @@ void test()
 
     compression_ctx->compress( memory_reader, memory_writer );
 
+    size_t compressed_size = memory_writer->getpos();
+
     double seconds = double(clock()-start) / CLOCKS_PER_SEC;
     printf("Compression level 0 in %.3fs (%.3fMB/s)\n", seconds, testsize*0.000001/seconds );
 
@@ -113,8 +118,8 @@ void test()
     TurboSqueeze::CompressorDestroy( compression_ctx );
     compression_ctx = nullptr;
 
-    // Compress at level 10
-    compression_ctx = TurboSqueeze::CompressorFactory( 10 );
+    // Compress at level 2
+    compression_ctx = TurboSqueeze::CompressorFactory( 2 );
     memory_reader = TurboSqueeze::MemoryReaderFactory( (char*) testinput, testsize );
     memory_writer = TurboSqueeze::MemoryWriterFactory( (char*) testoutput, testsize+testsize/4 );
 
@@ -123,9 +128,9 @@ void test()
     compression_ctx->compress( memory_reader, memory_writer );
 
     seconds = double(clock()-start) / CLOCKS_PER_SEC;
-    printf("Compression level 10 in %.3fs (%.3fMB/s)\n", seconds, testsize*0.000001/seconds );
+    printf("Compression level 2 in %.3fs (%.3fMB/s)\n", seconds, testsize*0.000001/seconds );
 
-    size_t compressed_size = memory_writer->getpos();
+    compressed_size = memory_writer->getpos();
 
     TurboSqueeze::WriterDestroy( memory_writer );
     memory_writer = nullptr;
@@ -164,6 +169,77 @@ void test()
 }
 
 
+/*
+** Test cases: Compress memory to file, decompress file to memory
+*/
+void testfile()
+{
+    const uint32_t testsize = 1<<24;
+
+    uint8_t* testinput = new uint8_t [testsize];
+    uint8_t* testdecompressed = new uint8_t [testsize];
+
+    if (testinput == nullptr || testdecompressed == nullptr)
+    {
+    	printf( "Sorry, your system doesn't have enough memory to run the test mode (%uMB required)\n", 2*(testsize>>20) );
+    	return;
+    }
+
+    for (uint32_t i=0; i<testsize; i++)
+        testinput[i] = i & 0xFF;
+
+    // Compress at level 2
+    auto compression_ctx = TurboSqueeze::CompressorFactory( 2 );
+    auto memory_reader = TurboSqueeze::MemoryReaderFactory( (char*) testinput, testsize );
+    auto file_writer = TurboSqueeze::FileWriterFactory( "smousse.tsq" );
+
+    clock_t start = clock();
+
+    compression_ctx->compress( memory_reader, file_writer );
+
+    double seconds = double(clock()-start) / CLOCKS_PER_SEC;
+    printf("Compression level 2 in %.3fs (%.3fMB/s)\n", seconds, testsize*0.000001/seconds );
+
+    size_t compressed_size = file_writer->getpos();
+
+    TurboSqueeze::WriterDestroy( file_writer );
+    file_writer = nullptr;
+    TurboSqueeze::ReaderDestroy( memory_reader );
+    memory_reader = nullptr;
+    TurboSqueeze::CompressorDestroy( compression_ctx );
+    compression_ctx = nullptr;
+
+    // Decompress
+    auto decompression_ctx = TurboSqueeze::DecompressorFactory();
+    auto file_reader = TurboSqueeze::FileReaderFactory( "smousse.tsq" );
+    auto memory_writer = TurboSqueeze::MemoryWriterFactory( (char*) testdecompressed, testsize );
+
+    start = clock();
+
+    decompression_ctx->decompress( file_reader, memory_writer );
+
+    seconds = double(clock()-start) / CLOCKS_PER_SEC;
+    printf("Decompression in %.3fs (%.3fMB/s)\n", seconds, testsize*0.000001/seconds );
+    TurboSqueeze::WriterDestroy( memory_writer );
+    memory_writer = nullptr;
+    TurboSqueeze::ReaderDestroy( file_reader );
+    file_reader = nullptr;
+    TurboSqueeze::DecompressorDestroy( decompression_ctx );
+    decompression_ctx = nullptr;
+
+    // Verify that the decompressed data is identical to the source
+    for (uint32_t i=0; i<testsize; i++)
+    {
+    	assert( testinput[i] == testdecompressed[i] );
+    }
+
+    delete [] testdecompressed;
+    delete [] testinput;
+
+    remove( "smousse.tsq" );
+}
+
+
 int main( int argc, const char** argv )
 {
     if (argc == 4 && strncmp(argv[1], "-c:", 3) == 0)
@@ -174,6 +250,8 @@ int main( int argc, const char** argv )
         decompress(argv[2], argv[3]);
     else if (argc == 2 && strncmp(argv[1], "-t", 2) == 0)
         test();
+    else if (argc == 2 && strncmp(argv[1], "-u", 2) == 0)
+        testfile();
     else
     {
         printf("TurboSqueeze v0.5\n"
