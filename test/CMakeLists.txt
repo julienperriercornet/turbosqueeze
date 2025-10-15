@@ -1,0 +1,13 @@
+
+project(testlib4zip LANGUAGES CXX)
+
+add_executable(testturbosqueeze test.cpp)
+
+target_link_libraries(testturbosqueeze PRIVATE turbosqueeze)
+
+add_test(NAME test_tsq_context COMMAND testturbosqueeze test_tsq_context)
+add_test(NAME test_tsq_compress COMMAND testturbosqueeze test_tsq_compress)
+add_test(NAME test_tsq_context_mt COMMAND testturbosqueeze test_tsq_context_mt)
+add_test(NAME test_tsq_compress_mt COMMAND testturbosqueeze test_tsq_compress_mt)
+add_test(NAME test_tsq_context_mt2 COMMAND testturbosqueeze test_tsq_context_mt2)
+add_test(NAME test_tsq_decompress_mt COMMAND testturbosqueeze test_tsq_decompress_mt)
