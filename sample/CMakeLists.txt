@@ -6,6 +6,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_FLAGS_RELEASE "-DNDEBUG -O3")
 
 add_executable(tsq main.cpp)
-target_compile_options(tsq PRIVATE "-fsanitize=address")
-target_link_options(tsq PRIVATE "-fsanitize=address")
+# target_compile_options(tsq PRIVATE "-fsanitize=address")
+# target_link_options(tsq PRIVATE "-fsanitize=address")
 target_link_libraries(tsq PRIVATE turbosqueeze)

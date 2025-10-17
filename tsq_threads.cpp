@@ -465,13 +465,11 @@ void decompression_read_worker( TSQDecompressionContext_MT* ctx )
         {
             uint32_t curworker = i % ctx->num_cores;
 
-            while (!((ctx->workers[curworker].currentReadInput >= ctx->workers[curworker].currentWorkInput) && 
+            if (!((ctx->workers[curworker].currentReadInput >= ctx->workers[curworker].currentWorkInput) && 
                 (ctx->workers[curworker].currentReadInput - ctx->workers[curworker].currentWorkInput) < ctx->workers[curworker].n_inputs))
             {
-                std::chrono::duration lapse = std::chrono::milliseconds(1);
                 std::unique_lock<std::mutex> lock(ctx->reader_mtx);
-                ctx->reader_cv.wait_for(lock, lapse, [curworker, ctx]{ 
-                    return (ctx->workers[curworker].currentReadInput >= ctx->workers[curworker].currentWorkInput) && 
+                ctx->reader_cv.wait(lock, [curworker, ctx]{ return (ctx->workers[curworker].currentReadInput >= ctx->workers[curworker].currentWorkInput) && 
                     (ctx->workers[curworker].currentReadInput - ctx->workers[curworker].currentWorkInput) < ctx->workers[curworker].n_inputs; });
             }
 
