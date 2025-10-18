@@ -159,6 +159,66 @@ int test_tsq_decompress_mt()
 }
 
 
+int test_tsq_compress_async_mt()
+{
+    char *compressed[3] = { nullptr };
+    size_t compressed_sz[3] = { 0 };
+
+    TSQCompressionContext_MT* context = tsqAllocateContextCompression_MT( false );
+
+    if (context != nullptr)
+    {
+        // We try to compress the same input with different settings, asynchronously
+        uint32_t jobid1, jobid2, jobid3;
+        jobid1 = jobid2 = jobid3 = 0;
+
+        jobid1 = tsqCompressAsync_MT(context, (uint8_t*) testinput, strlen(testinput), false, (uint8_t**) &compressed[0], &compressed_sz[0], false, false, 0);
+        jobid2 = tsqCompressAsync_MT(context, (uint8_t*) testinput, strlen(testinput), false, (uint8_t**) &compressed[1], &compressed_sz[1], false, true, 0);
+        jobid3 = tsqCompressAsync_MT(context, (uint8_t*) testinput, strlen(testinput), false, (uint8_t**) &compressed[2], &compressed_sz[2], false, true, 3);
+
+        tsqDeallocateContextCompression_MT(context);
+
+        return 0;
+    }
+    else
+    {
+        return 1;
+    }
+}
+
+
+int test_tsq_decompress_async_mt()
+{
+    char *compressed = nullptr;
+    size_t compressed_sz = 0;
+    char *decompressed = nullptr;
+    size_t decompressed_sz = 0;
+
+    TSQCompressionContext_MT* ccontext = tsqAllocateContextCompression_MT( false );
+    TSQDecompressionContext_MT* dcontext = tsqAllocateContextDecompression_MT( false );
+
+    if (ccontext && dcontext)
+    {
+        uint32_t retval = 1;
+        uint32_t jobid = tsqCompressAsync_MT(ccontext, (uint8_t*) testinput, strlen(testinput), false, (uint8_t**) &compressed, &compressed_sz, false, false, 0,
+        [&retval,dcontext,&decompressed,&decompressed_sz](uint32_t jid, bool success) { 
+            tsqDecompressAsync_MT(dcontext, (uint8_t*) testinput, strlen(testinput), false, (uint8_t**) &decompressed, &decompressed_sz, false,
+            [&retval](uint32_t jid, bool success) {
+                retval = 0;
+            }
+            );
+        }
+        );
+        tsqDeallocateContextCompression_MT(ccontext);
+        tsqDeallocateContextDecompression_MT(dcontext);
+
+        return retval;
+    }
+
+    return 1;
+}
+
+
 int main( int argc, const char** argv )
 {
     int status = -1;
@@ -177,6 +237,10 @@ int main( int argc, const char** argv )
         status = test_tsq_context_mt2();
     if (strcmp(argv[1], "test_tsq_decompress_mt") == 0)
         status = test_tsq_decompress_mt();
+    if (strcmp(argv[1], "test_tsq_compress_async_mt") == 0)
+        status = test_tsq_compress_async_mt();
+    if (strcmp(argv[1], "test_tsq_decompress_async_mt") == 0)
+        status = test_tsq_decompress_async_mt();
 
     return status;
 }

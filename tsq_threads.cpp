@@ -439,6 +439,70 @@ extern "C" bool tsqCompress_MT( TSQCompressionContext_MT* ctx, uint8_t* in, size
 }
 
 
+uint32_t tsqCompressAsync_MT( TSQCompressionContext_MT* ctx, uint8_t* in, size_t szin, bool infile, uint8_t** out, size_t *szout, bool outfile, bool useextensions, uint32_t level,
+    std::function<void(uint32_t jobid, bool)> user_completion_cb, std::function<void(uint32_t jobid, double)> user_progress_cb )
+{
+    uint32_t jobid;
+
+    struct TSQJob *job = (struct TSQJob*) malloc( sizeof(struct TSQJob) );
+
+    if (!job) return 0;
+
+    job->input = in;
+    job->size = szin;
+    job->input_file = infile;
+    if (outfile)
+    {
+        job->output = *out;
+        job->outsize = *szout;
+    }
+    else
+    {
+        job->output = nullptr;
+        job->outsize = 0;
+    }
+    job->output_file = outfile;
+    job->use_extensions = useextensions;
+    job->compression_level = level;
+    jobid = job->jobid = ctx->maxjobid++;
+    job->completion_cb = [user_completion_cb,ctx,job,out,szout](uint32_t jobid, bool success) {
+        if (ctx->verbose)
+        {
+            if (success) {
+                printf("Job %u completed successfully.\n", jobid);
+            } else {
+                printf("Job %u failed.                \n", jobid);
+            }
+        }
+        if (!job->output_file)
+        {
+            *out = job->output;
+            *szout = job->outsize;
+        }
+        if (user_completion_cb)
+        {
+            user_completion_cb(jobid, success);
+        }
+        free( job );
+    };
+    job->progress_cb = [user_progress_cb,ctx](uint32_t jobid, double progress) {
+        if (ctx->verbose)
+        {
+            printf("Job %u progress: %.2f%%\r", jobid, progress * 100.0);
+        }
+        if (user_progress_cb)
+            user_progress_cb(jobid, progress);
+    };
+
+    ctx->queue_mtx.lock();
+    ctx->queue->push(job);
+    ctx->queue_mtx.unlock();
+    ctx->queue_cv.notify_all();
+
+    return jobid;
+}
+
+
 void decompression_read_worker( TSQDecompressionContext_MT* ctx )
 {
     uint32_t last_job_id = 0xFFFFFFFF;
@@ -862,3 +926,68 @@ extern "C" bool tsqDecompress_MT( TSQDecompressionContext_MT* ctx, uint8_t* in, 
     return return_status; // Return the status of the compression job
 }
 
+
+uint32_t tsqDecompressAsync_MT( TSQDecompressionContext_MT* ctx, uint8_t* in, size_t szin, bool infile, uint8_t** out, size_t* szout, bool outfile,
+    std::function<void(uint32_t jobid, bool)> user_completion_cb, std::function<void(uint32_t jobid, double)> user_progress_cb )
+{
+    uint32_t jobid;
+
+    struct TSQJob *job = (struct TSQJob*) malloc( sizeof(struct TSQJob) );
+
+    if (!job) return 0;
+
+    job->input = in;
+    job->size = szin;
+    job->input_file = infile;
+    if (outfile)
+    {
+        job->output = *out;
+        job->outsize = *szout;
+    }
+    else
+    {
+        job->output = nullptr;
+        job->outsize = 0;
+    }
+    job->output_file = outfile;
+    job->use_extensions = false;
+    job->compression_level = 0;
+    jobid = job->jobid = ctx->maxjobid++;
+    job->completion_cb = [user_completion_cb,ctx,job,out,szout](uint32_t jobid, bool success) {
+        if (ctx->verbose)
+        {
+            if (success) {
+                printf("Job %u completed successfully.\n", jobid);
+            } else {
+                printf("Job %u failed.                \n", jobid);
+            }
+        }
+        if (!job->output_file)
+        {
+            *out = job->output;
+            *szout = job->outsize;
+        }
+        if (user_completion_cb)
+        {
+            user_completion_cb(jobid, success);
+        }
+        free( job );
+    };
+    job->progress_cb = [user_progress_cb,ctx](uint32_t jobid, double progress) {
+        if (ctx->verbose)
+        {
+            printf("Job %u progress: %.2f%%\r", jobid, progress * 100.0);
+        }
+        if (user_progress_cb)
+        {
+            user_progress_cb(jobid, progress);
+        }
+    };
+
+    ctx->queue_mtx.lock();
+    ctx->queue->push(job);
+    ctx->queue_mtx.unlock();
+    ctx->queue_cv.notify_all();
+
+    return jobid;
+}

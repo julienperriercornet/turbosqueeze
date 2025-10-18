@@ -134,6 +134,14 @@ extern "C" void tsqDeallocateContextCompression_MT(TSQCompressionContext_MT* ctx
 {
     if (!ctx) return;
 
+    // Wait for job queue to be empty
+    {
+        std::unique_lock<std::mutex> lock(ctx->queue_mtx);
+        ctx->queue_cv.wait(lock, [ctx] {
+            return ctx->queue->empty();
+        });
+    }
+
     // Signal threads to exit
     ctx->exit_request = true;
     ctx->queue_cv.notify_all();
@@ -246,6 +254,14 @@ extern "C" struct TSQDecompressionContext_MT* tsqAllocateContextDecompression_MT
 extern "C" void tsqDeallocateContextDecompression_MT(struct TSQDecompressionContext_MT* ctx)
 {
     if (!ctx) return;
+
+    // Wait for job queue to be empty
+    {
+        std::unique_lock<std::mutex> lock(ctx->queue_mtx);
+        ctx->queue_cv.wait(lock, [ctx] {
+            return ctx->queue->empty();
+        });
+    }
 
     // Signal threads to exit
     ctx->exit_request = true;

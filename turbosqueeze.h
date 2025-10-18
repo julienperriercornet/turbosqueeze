@@ -442,6 +442,42 @@ extern "C" {
     bool tsqCompress_MT( TSQCompressionContext_MT* ctx, uint8_t* in, size_t szin, bool infile, uint8_t** out, size_t *szout, bool outfile, bool useextensions, uint32_t level );
 
     /**
+     * Compresses data asynchronously using a multi-threaded context.
+     *
+     * This function schedules a compression job and returns immediately with a unique job ID.
+     * The actual compression is performed in the background by worker threads.
+     * Completion and progress are reported via user-provided callback functions.
+     *
+     * @param ctx Pointer to a TSQCompressionContext_MT structure, managing worker threads and job queues.
+     * @param in Pointer to input data buffer or filename (see infile).
+     *           If infile is true, this should be a filename string; otherwise, a memory buffer.
+     * @param szin Size of the input data in bytes. Ignored if infile is true and input is a filename.
+     * @param infile If true, 'in' is interpreted as a filename; if false, as a memory buffer.
+     * @param out Pointer to a pointer that will receive the output buffer address (allocated by the function if outfile is false).
+     *            If outfile is true, this should be a filename string; otherwise, a pointer to a memory buffer.
+     * @param szout Pointer to a variable that will receive the size of the compressed output in bytes.
+     * @param outfile If true, 'out' is interpreted as a filename; if false, as a memory buffer.
+     * @param useextensions If true, enables format extensions for improved compression or features.
+     * @param level Compression level (implementation-defined, typically 0 = fastest, higher = better compression).
+     * @param user_completion_cb Optional user callback invoked when the job completes.
+     *        Signature: void(uint32_t jobid, bool success)
+     *        - jobid: Unique job identifier.
+     *        - success: True if compression succeeded, false otherwise.
+     * @param user_progress_cb Optional user callback invoked to report progress.
+     *        Signature: void(uint32_t jobid, double progress)
+     *        - jobid: Unique job identifier.
+     *        - progress: Progress value in [0.0, 1.0].
+     *
+     * @return Unique job ID for the scheduled compression task. Use this ID to track job status in callbacks.
+     *
+     * @note The function returns immediately; compression occurs asynchronously.
+     * @note If outfile is false, the output buffer is allocated and must be freed by the caller.
+     * @note Thread safety: the context should not be used concurrently by multiple threads.
+     */
+    uint32_t tsqCompressAsync_MT( TSQCompressionContext_MT* ctx, uint8_t* in, size_t szin, bool infile, uint8_t** out, size_t *szout, bool outfile, bool useextensions, uint32_t level,
+        std::function<void(uint32_t jobid, bool)> user_completion_cb = nullptr, std::function<void(uint32_t jobid, double)> user_progress_cb = nullptr );
+
+    /**
      * Allocates and initializes a multi-threaded decompression context.
      *
      * @param verbose If true, enables verbose logging for debugging or progress reporting.
@@ -476,6 +512,42 @@ extern "C" {
      * @note Thread safety: the context should not be used concurrently by multiple threads.
      */
     bool tsqDecompress_MT( TSQDecompressionContext_MT* ctx, uint8_t* in, size_t szin, bool infile, uint8_t** out, size_t* szout, bool outfile );
+
+    /**
+     * Decompresses data asynchronously using a multi-threaded context.
+     *
+     * This function schedules a decompression job and returns immediately with a unique job ID.
+     * The actual decompression is performed in the background by worker threads.
+     * Completion and progress are reported via user-provided callback functions.
+     *
+     * @param ctx Pointer to a TSQDecompressionContext_MT structure, managing worker threads and job queues.
+     * @param in Pointer to input data buffer or filename (see infile).
+     *           If infile is true, this should be a filename string; otherwise, a memory buffer.
+     * @param szin Size of the input data in bytes. Ignored if infile is true and input is a filename.
+     * @param infile If true, 'in' is interpreted as a filename; if false, as a memory buffer.
+     * @param out Pointer to a pointer that will receive the output buffer address (allocated by the function if outfile is false).
+     *            If outfile is true, this should be a filename string; otherwise, a pointer to a memory buffer.
+     * @param szout Pointer to a variable that will receive the size of the decompressed output in bytes.
+     * @param outfile If true, 'out' is interpreted as a filename; if false, as a memory buffer.
+     * @param user_completion_cb Optional user callback invoked when the job completes.
+     *        Signature: void(uint32_t jobid, bool success, uint8_t* output, size_t sz)
+     *        - jobid: Unique job identifier.
+     *        - success: True if decompression succeeded, false otherwise.
+     *        - output: Pointer to decompressed data (if outfile is false).
+     *        - sz: Size of decompressed data.
+     * @param user_progress_cb Optional user callback invoked to report progress.
+     *        Signature: void(uint32_t jobid, double progress)
+     *        - jobid: Unique job identifier.
+     *        - progress: Progress value in [0.0, 1.0].
+     *
+     * @return Unique job ID for the scheduled decompression task. Use this ID to track job status in callbacks.
+     *
+     * @note The function returns immediately; decompression occurs asynchronously.
+     * @note If outfile is false, the output buffer is allocated and must be freed by the caller.
+     * @note Thread safety: the context should not be used concurrently by multiple threads.
+     */
+    uint32_t tsqDecompressAsync_MT( TSQDecompressionContext_MT* ctx, uint8_t* in, size_t szin, bool infile, uint8_t** out, size_t* szout, bool outfile,
+        std::function<void(uint32_t jobid, bool)> user_completion_cb = nullptr, std::function<void(uint32_t jobid, double)> user_progress_cb = nullptr );
 
     /**
      * Allocates and initializes a low-level compression context for single-threaded use.
