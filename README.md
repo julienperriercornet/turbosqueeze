@@ -46,7 +46,7 @@ High-performance libraries like Turbosqueeze do more than just speed up your sof
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/yourusername/turbosqueeze.git
+   git clone https://github.com/julienperriercornet/turbosqueeze.git
    cd turbosqueeze
    ```
 2. **Build with CMake:**
