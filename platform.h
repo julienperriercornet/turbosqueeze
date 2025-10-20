@@ -31,7 +31,7 @@
 #include <immintrin.h>
 int stdc_trailing_zeros_ull( uint64_t value )
 {
-    return (int) _tzcnt_u64( value )
+    return (int) _tzcnt_u64( value );
 }
 #else
 #include <stdbit.h>
