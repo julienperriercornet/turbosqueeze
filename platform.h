@@ -29,7 +29,7 @@
 
 #if _MSC_VER
 #include <immintrin.h>
-int stdc_trailing_zeros_ull( uint64_t value )
+int stdc_trailing_zeros_ull( unsigned long long value )
 {
     return (int) _tzcnt_u64( value );
 }
