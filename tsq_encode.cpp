@@ -27,7 +27,7 @@
 #include <cstring>
 #include <cassert>
 #include <time.h>
-#include <stdbit.h>
+#include "platform.h"
 
 #ifdef AVX2
 #if _MSC_VER

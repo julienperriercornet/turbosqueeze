@@ -27,5 +27,14 @@
 #define align_free( A ) free( A )
 #endif
 
+#if _MSC_VER
+#include <intrin.h>
+int stdc_trailing_zeros_ull( uint64_t value )
+{
+    return (int) _tzcnt_u64( value )
+}
+#else
+#include <stdbit.h>
+#endif
 
 #define MAX_CACHE_LINE_SIZE 128
