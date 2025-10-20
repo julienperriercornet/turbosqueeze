@@ -39,12 +39,12 @@ int test_tsq_compress()
         uint32_t compressedSz;
         uint32_t uncompressedSz;
 
-        tsqEncode( context, (uint8_t *) testinput, (uint8_t *) &compressed[0], &compressedSz, 700, true );
+        tsqEncode( context, (uint8_t *) testinput, (uint8_t *) &compressed[0], &compressedSz, strlen(testinput), true );
         tsqDecode( (uint8_t *) &compressed[0], (uint8_t *) &uncompressed[0], &uncompressedSz, compressedSz, true );
 
         tsqDeallocateContext(context);
 
-        return strncmp( testinput, &uncompressed[0], 700 );
+        return memcmp( testinput, &uncompressed[0], uncompressedSz );
     }
     else
     {
@@ -88,6 +88,11 @@ int test_tsq_compress_mt()
         tsqCompress_MT(context, (uint8_t*) testinput, strlen(testinput), false, (uint8_t**) &compressed3, &compressed_sz3, false, true, 3);
 
         tsqDeallocateContextCompression_MT(context);
+
+        free(compressed1);
+        free(compressed2);
+        free(compressed3);
+
         return 0;
     }
     else
@@ -147,8 +152,15 @@ int test_tsq_decompress_mt()
 
         uint32_t retval = 0;
 
-        if (strncmp(testinput, decompressed1, 700) != 0 || strncmp(testinput, decompressed2, 700) != 0 || strncmp(testinput, decompressed3, 700) != 0)
+        if (strncmp(testinput, decompressed1, decompressed_sz1) != 0 || strncmp(testinput, decompressed2, decompressed_sz2) != 0 || strncmp(testinput, decompressed3, decompressed_sz3) != 0)
             retval = 1;
+
+        free(compressed1);
+        free(compressed2);
+        free(compressed3);
+        free(decompressed1);
+        free(decompressed2);
+        free(decompressed3);
 
         return retval;
     }
@@ -172,11 +184,15 @@ int test_tsq_compress_async_mt()
         uint32_t jobid1, jobid2, jobid3;
         jobid1 = jobid2 = jobid3 = 0;
 
-        jobid1 = tsqCompressAsync_MT(context, (uint8_t*) testinput, strlen(testinput), false, (uint8_t**) &compressed[0], &compressed_sz[0], false, false, 0);
-        jobid2 = tsqCompressAsync_MT(context, (uint8_t*) testinput, strlen(testinput), false, (uint8_t**) &compressed[1], &compressed_sz[1], false, true, 0);
-        jobid3 = tsqCompressAsync_MT(context, (uint8_t*) testinput, strlen(testinput), false, (uint8_t**) &compressed[2], &compressed_sz[2], false, true, 3);
+        jobid1 = tsqCompressAsync_MT(context, (uint8_t*) testinput, strlen(testinput), false, (uint8_t**) &compressed[0], &compressed_sz[0], false, false, 0, [](uint32_t,bool){},[](uint32_t,double){});
+        jobid2 = tsqCompressAsync_MT(context, (uint8_t*) testinput, strlen(testinput), false, (uint8_t**) &compressed[1], &compressed_sz[1], false, true, 0, [](uint32_t,bool){},[](uint32_t,double){});
+        jobid3 = tsqCompressAsync_MT(context, (uint8_t*) testinput, strlen(testinput), false, (uint8_t**) &compressed[2], &compressed_sz[2], false, true, 3, [](uint32_t,bool){},[](uint32_t,double){});
 
         tsqDeallocateContextCompression_MT(context);
+
+        free(compressed[0]);
+        free(compressed[1]);
+        free(compressed[2]);
 
         return 0;
     }
@@ -201,13 +217,17 @@ int test_tsq_decompress_async_mt()
     {
         uint32_t retval = 1;
         uint32_t jobid = tsqCompressAsync_MT(ccontext, (uint8_t*) testinput, strlen(testinput), false, (uint8_t**) &compressed, &compressed_sz, false, false, 0,
-        [&retval,dcontext,&decompressed,&decompressed_sz](uint32_t jid, bool success) { 
+        [&retval,dcontext,&decompressed,&decompressed_sz,&compressed](uint32_t jid, bool success) { 
             tsqDecompressAsync_MT(dcontext, (uint8_t*) testinput, strlen(testinput), false, (uint8_t**) &decompressed, &decompressed_sz, false,
-            [&retval](uint32_t jid, bool success) {
-                retval = 0;
-            }
+            [&retval,&compressed,&decompressed,&decompressed_sz](uint32_t jid, bool success) {
+                free(compressed);
+                retval = memcmp( testinput, decompressed, decompressed_sz );
+                free(decompressed);
+            },
+            [](uint32_t,double){}
             );
-        }
+        },
+        [](uint32_t,double){}
         );
         tsqDeallocateContextCompression_MT(ccontext);
         tsqDeallocateContextDecompression_MT(dcontext);

@@ -201,7 +201,11 @@ struct TSQWorker {
  *   completion_cb - Callback function invoked upon job completion (jobid, success).
  *   progress_cb - Callback function invoked to report progress (jobid, progress [0.0-1.0]).
  */
-struct TSQJob {
+class TSQJob {
+public:
+    TSQJob() : input(nullptr), size(0), input_file(false), jobid(0), use_extensions(false), compression_level(0), input_stream(nullptr),
+        input_size(0), output(nullptr), outsize(0), output_file(false), completion_cb(nullptr), progress_cb(nullptr) {}
+
     /**
      * Pointer to input data buffer or filename (if input_file is true).
      */
@@ -294,7 +298,7 @@ public:
     uint32_t num_cores;
     struct TSQWorker* workers;
 
-    struct TSQJob *currentjob;
+    volatile TSQJob *currentjob;
 
     std::thread** threads;
     std::thread* reader;
@@ -352,7 +356,7 @@ public:
     uint32_t num_cores;
     struct TSQWorker* workers;
 
-    struct TSQJob *currentjob;
+    volatile TSQJob *currentjob;
 
     std::thread** threads;
     std::thread* reader;
@@ -481,7 +485,7 @@ extern "C" {
      * @note Thread safety: the context should not be used concurrently by multiple threads.
      */
     uint32_t tsqCompressAsync_MT( TSQCompressionContext_MT* ctx, uint8_t* in, size_t szin, bool infile, uint8_t** out, size_t *szout, bool outfile, bool useextensions, uint32_t level,
-        std::function<void(uint32_t jobid, bool)> user_completion_cb = nullptr, std::function<void(uint32_t jobid, double)> user_progress_cb = nullptr );
+        std::function<void(uint32_t jobid, bool)> user_completion_cb, std::function<void(uint32_t jobid, double)> user_progress_cb );
 
     /**
      * Allocates and initializes a multi-threaded decompression context.
@@ -553,7 +557,7 @@ extern "C" {
      * @note Thread safety: the context should not be used concurrently by multiple threads.
      */
     uint32_t tsqDecompressAsync_MT( TSQDecompressionContext_MT* ctx, uint8_t* in, size_t szin, bool infile, uint8_t** out, size_t* szout, bool outfile,
-        std::function<void(uint32_t jobid, bool)> user_completion_cb = nullptr, std::function<void(uint32_t jobid, double)> user_progress_cb = nullptr );
+        std::function<void(uint32_t jobid, bool)> user_completion_cb, std::function<void(uint32_t jobid, double)> user_progress_cb );
 
     /**
      * Allocates and initializes a low-level compression context for single-threaded use.

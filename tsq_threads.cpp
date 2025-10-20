@@ -1,3 +1,4 @@
+
 /*
  * Turbosqueeze thread functions.
  *
@@ -63,12 +64,10 @@ void compression_read_worker( TSQCompressionContext_MT* ctx )
         }
         else break;
 
-        assert( ctx->currentjob );
         last_job_id = ctx->currentjob->jobid;
 
-        TSQJob& job = *ctx->currentjob;
-        FILE* inpput_stream = job.input_stream;
-        size_t input_size = job.input_size;
+        FILE* inpput_stream = ctx->currentjob->input_stream;
+        size_t input_size = ctx->currentjob->input_size;
 
         for (uint32_t i=0; i<ctx->input_blocks; i++)
         {
@@ -89,20 +88,20 @@ void compression_read_worker( TSQCompressionContext_MT* ctx )
 
             if (to_read > 0 && to_read<=TSQ_BLOCK_SZ)
             {
-                if (job.input_stream)
+                if (ctx->currentjob->input_stream)
                 {
-                    to_read = fread(inbuff, 1, to_read, job.input_stream);
+                    to_read = fread(inbuff, 1, to_read, ctx->currentjob->input_stream);
                     ctx->workers[curworker].inputs[curbuf].buffer = inbuff;
                     ctx->workers[curworker].inputs[curbuf].size = to_read;
-                    ctx->workers[curworker].inputs[curbuf].ext = job.use_extensions;
-                    ctx->workers[curworker].inputs[curbuf].compression_level = job.compression_level;
+                    ctx->workers[curworker].inputs[curbuf].ext = ctx->currentjob->use_extensions;
+                    ctx->workers[curworker].inputs[curbuf].compression_level = ctx->currentjob->compression_level;
                 }
                 else
                 {
-                    ctx->workers[curworker].inputs[curbuf].buffer = job.input + i * TSQ_BLOCK_SZ;
+                    ctx->workers[curworker].inputs[curbuf].buffer = ctx->currentjob->input + i * TSQ_BLOCK_SZ;
                     ctx->workers[curworker].inputs[curbuf].size = to_read;
-                    ctx->workers[curworker].inputs[curbuf].ext = job.use_extensions;
-                    ctx->workers[curworker].inputs[curbuf].compression_level = job.compression_level;
+                    ctx->workers[curworker].inputs[curbuf].ext = ctx->currentjob->use_extensions;
+                    ctx->workers[curworker].inputs[curbuf].compression_level = ctx->currentjob->compression_level;
                 }
 
                 ctx->workers[curworker].currentReadInput++;
@@ -133,7 +132,6 @@ void compression_worker( uint32_t threadid, TSQCompressionContext_MT* ctx )
         }
         else break;
 
-        TSQJob& job = *ctx->currentjob;
         last_job_id = ctx->currentjob->jobid;
 
         for (uint32_t i = 0; i < ctx->workers[threadid].blocksPerWorker; ++i)
@@ -156,7 +154,7 @@ void compression_worker( uint32_t threadid, TSQCompressionContext_MT* ctx )
 
             uint32_t curout = worker.currentWorkOutput % worker.n_outputs;
 
-            uint8_t* inbuff = job.input_file ? worker.inputs[curbuf].filebuffer : worker.inputs[curbuf].buffer;
+            uint8_t* inbuff = ctx->currentjob->input_file ? worker.inputs[curbuf].filebuffer : worker.inputs[curbuf].buffer;
             uint8_t *outbuff = worker.outputs[curout].filebuffer;
 
             assert( worker.currentWorkInput == worker.currentWorkOutput );
@@ -363,11 +361,14 @@ void compression_write_worker( TSQCompressionContext_MT* ctx )
             job.output = pp;
         }
 
-        ctx->currentjob = nullptr; // Clear current job after completion
+        //ctx->currentjob = nullptr; // Clear current job after completion
         job.completion_cb(job.jobid, true); // Notify completion
 
 flushcurjob:
-        ctx->currentjob = nullptr; // Clear current job after completion
+        {
+            std::unique_lock<std::mutex> lock(ctx->queue_mtx);
+            ctx->currentjob = nullptr; // Clear current job after completion
+        }
         ctx->queue_mtx.lock();
         ctx->queue->pop(); // Remove the completed job from the queue
         ctx->queue_mtx.unlock();
@@ -388,7 +389,8 @@ extern "C" bool tsqCompress_MT( TSQCompressionContext_MT* ctx, uint8_t* in, size
     bool finished = false;
     bool return_status;
 
-    struct TSQJob job;
+    TSQJob job;
+
     job.input = in;
     job.size = szin;
     job.input_file = infile;
@@ -452,7 +454,7 @@ uint32_t tsqCompressAsync_MT( TSQCompressionContext_MT* ctx, uint8_t* in, size_t
 {
     uint32_t jobid;
 
-    struct TSQJob *job = (struct TSQJob*) malloc( sizeof(struct TSQJob) );
+    TSQJob *job = new TSQJob();
 
     if (!job) return 0;
 
@@ -491,7 +493,7 @@ uint32_t tsqCompressAsync_MT( TSQCompressionContext_MT* ctx, uint8_t* in, size_t
         {
             user_completion_cb(jobid, success);
         }
-        free( job );
+        delete job;
     };
     job->progress_cb = [user_progress_cb,ctx](uint32_t jobid, double progress) {
         if (ctx->verbose)
@@ -526,12 +528,10 @@ void decompression_read_worker( TSQDecompressionContext_MT* ctx )
         }
         else break;
 
-        assert( ctx->currentjob );
         last_job_id = ctx->currentjob->jobid;
 
-        TSQJob& job = *ctx->currentjob;
-        FILE* inpput_stream = job.input_stream;
-        size_t input_size = job.input_size;
+        FILE* inpput_stream = ctx->currentjob->input_stream;
+        size_t input_size = ctx->currentjob->input_size;
 
         for (uint32_t i=0; i<ctx->input_blocks; i++)
         {
@@ -551,17 +551,17 @@ void decompression_read_worker( TSQDecompressionContext_MT* ctx )
             uint32_t to_read;
             uint32_t with_extensions;
 
-            if (job.input_stream)
+            if (ctx->currentjob->input_stream)
             {
-                to_read = fgetc( job.input_stream );
-                to_read |= fgetc( job.input_stream ) << 8;
-                to_read |= fgetc( job.input_stream ) << 16;
+                to_read = fgetc( ctx->currentjob->input_stream );
+                to_read |= fgetc( ctx->currentjob->input_stream ) << 8;
+                to_read |= fgetc( ctx->currentjob->input_stream ) << 16;
                 with_extensions = (to_read & 0x800000) != 0;
                 to_read &= 0x7FFFFF;
 
                 if (to_read>0 && to_read<=TSQ_OUTPUT_SZ)
                 {
-                    uint32_t actually_read = fread(inbuff, 1, to_read, job.input_stream);
+                    uint32_t actually_read = fread(inbuff, 1, to_read, ctx->currentjob->input_stream);
                     if (actually_read != to_read) break;
                     ctx->workers[curworker].inputs[curbuf].buffer = inbuff;
                     ctx->workers[curworker].inputs[curbuf].size = to_read;
@@ -578,18 +578,18 @@ void decompression_read_worker( TSQDecompressionContext_MT* ctx )
             }
             else
             {
-                to_read = job.input[0];
-                to_read |= job.input[1] << 8;
-                to_read |= job.input[2] << 16;
+                to_read = ctx->currentjob->input[0];
+                to_read |= ctx->currentjob->input[1] << 8;
+                to_read |= ctx->currentjob->input[2] << 16;
                 with_extensions = (to_read & 0x800000) != 0;
                 to_read &= 0x7FFFFF;
 
                 if (to_read > 0 && to_read<=TSQ_OUTPUT_SZ)
                 {
-                    ctx->workers[curworker].inputs[curbuf].buffer = job.input + 3;
+                    ctx->workers[curworker].inputs[curbuf].buffer = ctx->currentjob->input + 3;
                     ctx->workers[curworker].inputs[curbuf].size = to_read;
                     ctx->workers[curworker].inputs[curbuf].ext = with_extensions;
-                    job.input += to_read + 3;
+                    ctx->currentjob->input += to_read + 3;
                 }
                 else
                     break;
@@ -618,7 +618,6 @@ void decompression_worker( uint32_t threadid, TSQDecompressionContext_MT* ctx )
         }
         else break;
 
-        TSQJob& job = *ctx->currentjob;
         last_job_id = ctx->currentjob->jobid;
 
         for (uint32_t i = 0; i < ctx->workers[threadid].blocksPerWorker; ++i)
@@ -848,7 +847,7 @@ void decompression_write_worker( TSQDecompressionContext_MT* ctx )
         if (!out)
             job.output = pp;
 
-        ctx->currentjob = nullptr; // Clear current job after completion from the queue
+        //ctx->currentjob = nullptr; // Clear current job after completion from the queue
         job.completion_cb(job.jobid, true); // Notify completion
         if (out)
         {
@@ -857,7 +856,10 @@ void decompression_write_worker( TSQDecompressionContext_MT* ctx )
         }
 
 flushcurjob:
-        ctx->currentjob = nullptr; // Clear current job after completion
+        {
+            std::unique_lock<std::mutex> lock(ctx->queue_mtx);
+            ctx->currentjob = nullptr; // Clear current job after completion
+        }
         ctx->queue_mtx.lock();
         ctx->queue->pop(); // Remove the completed job from the queue
         ctx->queue_mtx.unlock();
@@ -878,7 +880,8 @@ extern "C" bool tsqDecompress_MT( TSQDecompressionContext_MT* ctx, uint8_t* in, 
     bool finished = false;
     bool return_status;
 
-    struct TSQJob job;
+    TSQJob job;
+
     job.input = in;
     job.size = szin;
     job.input_file = infile;
@@ -940,7 +943,7 @@ uint32_t tsqDecompressAsync_MT( TSQDecompressionContext_MT* ctx, uint8_t* in, si
 {
     uint32_t jobid;
 
-    struct TSQJob *job = (struct TSQJob*) malloc( sizeof(struct TSQJob) );
+    TSQJob *job = new TSQJob;
 
     if (!job) return 0;
 
@@ -979,7 +982,7 @@ uint32_t tsqDecompressAsync_MT( TSQDecompressionContext_MT* ctx, uint8_t* in, si
         {
             user_completion_cb(jobid, success);
         }
-        free( job );
+        delete job;
     };
     job->progress_cb = [user_progress_cb,ctx](uint32_t jobid, double progress) {
         if (ctx->verbose)

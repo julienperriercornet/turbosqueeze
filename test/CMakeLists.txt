@@ -2,7 +2,8 @@
 project(testlib4zip LANGUAGES CXX)
 
 add_executable(testturbosqueeze test.cpp)
-
+# target_compile_options(testturbosqueeze PRIVATE "-fsanitize=address")
+# target_link_options(testturbosqueeze PRIVATE "-fsanitize=address")
 target_link_libraries(testturbosqueeze PRIVATE turbosqueeze)
 
 add_test(NAME test_tsq_context COMMAND testturbosqueeze test_tsq_context)

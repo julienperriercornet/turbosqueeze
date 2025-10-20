@@ -59,6 +59,7 @@ extern "C" struct TSQCompressionContext* tsqAllocateContext()
     if (context)
     {
         context->refhash = nullptr;
+        //context->refhash = (uint16_t*) malloc( TSQ_HASH_SZ );
         context->refhash = (uint16_t*) align_alloc( MAX_CACHE_LINE_SIZE, TSQ_HASH_SZ );
 
         if (!context->refhash)
