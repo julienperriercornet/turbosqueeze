@@ -62,6 +62,8 @@ struct TSQCompressionContext {
     uint16_t *refhash;
 };
 
+class TSQJob;
+
 /*
  * \struct TSQBuffer
  * @brief Buffer structure for holding data blocks during compression or decompression.
@@ -84,6 +86,10 @@ struct TSQBuffer {
      * Pointer to a file buffer, used when reading from or writing to files.
      */
     uint8_t* filebuffer;
+    /**
+     * Pointer to the job.
+     */
+    TSQJob* job;
     /**
      * Size of the data in the buffer, in bytes.
      */
@@ -132,12 +138,12 @@ struct TSQWorker {
      * Index of the next input buffer to be read by the worker.
      * Volatile for safe concurrent access.
      */
-    volatile uint32_t currentReadInput;
+    volatile uint64_t currentReadInput;
     /**
      * Index of the input buffer currently being processed.
      * Volatile for safe concurrent access.
      */
-    volatile uint32_t currentWorkInput;
+    volatile uint64_t currentWorkInput;
     /**
      * Mutex for synchronizing access to input buffers.
      */
@@ -159,12 +165,12 @@ struct TSQWorker {
      * Index of the output buffer currently being written.
      * Volatile for safe concurrent access.
      */
-    volatile uint32_t currentWorkOutput;
+    volatile uint64_t currentWorkOutput;
     /**
      * Index of the next output buffer to be written to disk or memory.
      * Volatile for safe concurrent access.
      */
-    volatile uint32_t currentWriteOutput;
+    volatile uint64_t currentWriteOutput;
     /**
      * Mutex for synchronizing access to output buffers.
      */
@@ -203,8 +209,32 @@ struct TSQWorker {
  */
 class TSQJob {
 public:
+
+    /**
+     * Constructor initializes members to default values.
+     */
     TSQJob() : input(nullptr), size(0), input_file(false), jobid(0), use_extensions(false), compression_level(0), input_stream(nullptr),
-        input_size(0), output(nullptr), outsize(0), output_file(false), completion_cb(nullptr), progress_cb(nullptr) {}
+        input_size(0), start_block(0), n_blocks(0), output(nullptr), outsize(0), output_file(false), output_stream(nullptr), error_occurred(false),
+        completion_cb(nullptr), progress_cb(nullptr)
+    {
+    }
+
+    /**
+     * Destructor cleans up file streams if necessary.
+     */
+    ~TSQJob()
+    {
+        if (input_file && input_stream)
+        {
+            fclose(input_stream);
+            input_stream = nullptr;
+        }
+        if (output_file && output_stream)
+        {
+            fclose(output_stream);
+            output_stream = nullptr;
+        }
+    }
 
     /**
      * Pointer to input data buffer or filename (if input_file is true).
@@ -238,6 +268,14 @@ public:
      * Size of the input data (may be redundant with 'size').
      */
     size_t input_size;
+    /**
+     * Start block to process
+     */
+    uint64_t start_block;
+    /**
+     * Number of blocks to process
+     */
+    uint64_t n_blocks;
 
     /**
      * Pointer to output data buffer or filename (if output_file is true).
@@ -251,6 +289,14 @@ public:
      * If true, 'output' is interpreted as a filename; if false, as a memory buffer.
      */
     bool output_file;
+    /**
+     * File stream for output, if applicable.
+     */
+    FILE* output_stream;
+    /**
+     * Flag indicating if an error occurred during processing.
+     */
+    bool error_occurred;
 
     /**
      * Callback function invoked upon job completion.
@@ -291,14 +337,11 @@ public:
 class TSQCompressionContext_MT {
 public:
 
-    TSQCompressionContext_MT() : num_cores(1), workers(nullptr), currentjob(nullptr), threads(nullptr), reader(nullptr), writer(nullptr),
-        reader_mtx(), reader_cv(), blocks_writen(0), input_blocks(0), queue(nullptr), queue_mtx(), queue_cv(), maxjobid(1), exit_request(false),
-        verbose(false) {}
+    TSQCompressionContext_MT() : num_cores(1), workers(nullptr), threads(nullptr), reader(nullptr), writer(nullptr),
+        reader_mtx(), reader_cv(), input_blocks(0), queue(nullptr), queue_mtx(), queue_cv(), maxjobid(1), exit_request(false), verbose(false) {}
 
     uint32_t num_cores;
     struct TSQWorker* workers;
-
-    volatile TSQJob *currentjob;
 
     std::thread** threads;
     std::thread* reader;
@@ -307,9 +350,8 @@ public:
     std::mutex reader_mtx;
     std::condition_variable reader_cv;
 
-    // progress
-    uint32_t blocks_writen;
-    uint32_t input_blocks;
+    // scheduling
+    uint64_t input_blocks;
 
     // Job queue
     std::queue<struct TSQJob*> *queue;
@@ -350,13 +392,11 @@ public:
 class TSQDecompressionContext_MT {
 public:
 
-    TSQDecompressionContext_MT() : num_cores(1), workers(nullptr), currentjob(nullptr), threads(nullptr), reader(nullptr), writer(nullptr),
-        reader_mtx(), reader_cv(), blocks_writen(0), input_blocks(0), queue(nullptr), queue_mtx(), queue_cv(), maxjobid(1), exit_request(false), verbose(false) {}
+    TSQDecompressionContext_MT() : num_cores(1), workers(nullptr), threads(nullptr), reader(nullptr), writer(nullptr),
+        reader_mtx(), reader_cv(), input_blocks(0), queue(nullptr), queue_mtx(), queue_cv(), maxjobid(1), exit_request(false), verbose(false) {}
 
     uint32_t num_cores;
     struct TSQWorker* workers;
-
-    volatile TSQJob *currentjob;
 
     std::thread** threads;
     std::thread* reader;
@@ -365,9 +405,9 @@ public:
     std::mutex reader_mtx;
     std::condition_variable reader_cv;
 
-    // progress
-    uint32_t blocks_writen;
-    uint32_t input_blocks;
+    // scheduling
+    uint64_t input_blocks;
+    uint64_t blocks_writen;
 
     // Job queue
     std::queue<struct TSQJob*> *queue;

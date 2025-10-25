@@ -118,8 +118,6 @@ extern "C" struct TSQCompressionContext_MT* tsqAllocateContextCompression_MT( bo
     }
 
     // no job in progress
-    ctx->currentjob = nullptr;
-    ctx->blocks_writen = 0;
     ctx->input_blocks = 0;
     ctx->queue = new std::queue<TSQJob*>();
     ctx->maxjobid = 1;
@@ -152,6 +150,7 @@ extern "C" void tsqDeallocateContextCompression_MT(TSQCompressionContext_MT* ctx
     // Signal threads to exit
     ctx->exit_request = true;
     ctx->queue_cv.notify_all();
+    ctx->reader_cv.notify_all();
 
     // Join threads
     if (ctx->reader) {
@@ -161,8 +160,8 @@ extern "C" void tsqDeallocateContextCompression_MT(TSQCompressionContext_MT* ctx
     if (ctx->threads) {
         for (uint32_t i = 0; i < ctx->num_cores; ++i) {
             if (ctx->threads[i]) {
-                ctx->workers[i].input_cv.notify_one();
-                ctx->workers[i].output_cv.notify_one();
+                ctx->workers[i].input_cv.notify_all();
+                ctx->workers[i].output_cv.notify_all();
                 ctx->threads[i]->join();
                 delete ctx->threads[i];
             }
@@ -224,6 +223,7 @@ extern "C" struct TSQDecompressionContext_MT* tsqAllocateContextDecompression_MT
             TSQBuffer buffer;
             buffer.buffer = nullptr;
             buffer.filebuffer = (uint8_t*) malloc(65536+TSQ_OUTPUT_SZ * sizeof(uint8_t));
+            memset( buffer.filebuffer, 0, 65536 );
             buffer.size = TSQ_OUTPUT_SZ;
             ctx->workers[i].inputs.push_back(buffer);
         }
@@ -239,8 +239,6 @@ extern "C" struct TSQDecompressionContext_MT* tsqAllocateContextDecompression_MT
     }
 
     // no job in progress
-    ctx->currentjob = nullptr;
-    ctx->blocks_writen = 0;
     ctx->input_blocks = 0;
     ctx->queue = new std::queue<TSQJob*>();
     ctx->maxjobid = 1;
@@ -273,6 +271,7 @@ extern "C" void tsqDeallocateContextDecompression_MT(struct TSQDecompressionCont
     // Signal threads to exit
     ctx->exit_request = true;
     ctx->queue_cv.notify_all();
+    ctx->reader_cv.notify_all();
 
     // Join threads
     if (ctx->reader) {
@@ -282,8 +281,8 @@ extern "C" void tsqDeallocateContextDecompression_MT(struct TSQDecompressionCont
     if (ctx->threads) {
         for (uint32_t i = 0; i < ctx->num_cores; ++i) {
             if (ctx->threads[i]) {
-                ctx->workers[i].input_cv.notify_one();
-                ctx->workers[i].output_cv.notify_one();
+                ctx->workers[i].input_cv.notify_all();
+                ctx->workers[i].output_cv.notify_all();
                 ctx->threads[i]->join();
                 delete ctx->threads[i];
             }

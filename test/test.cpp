@@ -102,6 +102,33 @@ int test_tsq_compress_mt()
 }
 
 
+int test_tsq_queue_mt()
+{
+    char *compressed1 = nullptr;
+    size_t compressed_sz1 = 0;
+
+    TSQCompressionContext_MT* context = tsqAllocateContextCompression_MT( true );
+
+    if (context != nullptr)
+    {
+        // We try to compress the same input with different settings
+        for (int i = 0; i < 1000; i++)
+        {
+            tsqCompress_MT(context, (uint8_t*) testinput, strlen(testinput), false, (uint8_t**) &compressed1, &compressed_sz1, false, false, 0);
+            free(compressed1);
+        }
+
+        tsqDeallocateContextCompression_MT(context);
+
+        return 0;
+    }
+    else
+    {
+        return 1;
+    }
+}
+
+
 int test_tsq_context_mt2()
 {
     TSQDecompressionContext_MT* context = tsqAllocateContextDecompression_MT( false );
@@ -217,8 +244,9 @@ int test_tsq_decompress_async_mt()
     {
         uint32_t retval = 1;
         uint32_t jobid = tsqCompressAsync_MT(ccontext, (uint8_t*) testinput, strlen(testinput), false, (uint8_t**) &compressed, &compressed_sz, false, false, 0,
-        [&retval,dcontext,&decompressed,&decompressed_sz,&compressed](uint32_t jid, bool success) { 
-            tsqDecompressAsync_MT(dcontext, (uint8_t*) testinput, strlen(testinput), false, (uint8_t**) &decompressed, &decompressed_sz, false,
+        [&retval,dcontext,&decompressed,&decompressed_sz,&compressed,&compressed_sz](uint32_t jid, bool success) { 
+            if (success)
+                tsqDecompressAsync_MT(dcontext, (uint8_t*) compressed, compressed_sz, false, (uint8_t**) &decompressed, &decompressed_sz, false,
             [&retval,&compressed,&decompressed,&decompressed_sz](uint32_t jid, bool success) {
                 free(compressed);
                 retval = memcmp( testinput, decompressed, decompressed_sz );
@@ -253,6 +281,8 @@ int main( int argc, const char** argv )
         status = test_tsq_context_mt();
     if (strcmp(argv[1], "test_tsq_compress_mt") == 0)
         status = test_tsq_compress_mt();
+    if (strcmp(argv[1], "test_tsq_queue_mt") == 0)
+        status = test_tsq_queue_mt();
     if (strcmp(argv[1], "test_tsq_context_mt2") == 0)
         status = test_tsq_context_mt2();
     if (strcmp(argv[1], "test_tsq_decompress_mt") == 0)
