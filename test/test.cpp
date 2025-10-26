@@ -39,6 +39,7 @@ int test_tsq_compress()
         uint32_t compressedSz;
         uint32_t uncompressedSz;
 
+        memset( context->refhash, 0, TSQ_HASH_SZ );
         tsqEncode( context, (uint8_t *) testinput, (uint8_t *) &compressed[0], &compressedSz, strlen(testinput), true );
         tsqDecode( (uint8_t *) &compressed[0], (uint8_t *) &uncompressed[0], &uncompressedSz, compressedSz, true );
 
@@ -317,6 +318,11 @@ int test_tsq_massive_async_mt()
 
         tsqDeallocateContextCompression_MT(ccontext);
         tsqDeallocateContextDecompression_MT(dcontext);
+
+        free(compressed);
+        free(compressed_sz);
+        free(decompressed);
+        free(decompressed_sz);
 
         return retval;
     }

@@ -545,6 +545,8 @@ void decompression_read_worker( TSQDecompressionContext_MT* ctx )
 
 void decompression_worker( uint32_t threadid, TSQDecompressionContext_MT* ctx )
 {
+    uint64_t i = 0;
+
     while (true)
     {
         if (!(ctx->workers[threadid].currentReadInput > ctx->workers[threadid].currentWorkInput || ctx->exit_request))
@@ -565,10 +567,17 @@ void decompression_worker( uint32_t threadid, TSQDecompressionContext_MT* ctx )
 
         if (ctx->exit_request) break;
 
+        TSQJob* job = ctx->workers[threadid].inputs[curbuf].job;
+
         uint32_t curout = ctx->workers[threadid].currentWorkOutput % ctx->workers[threadid].n_outputs;
 
         uint8_t* inbuff = ctx->workers[threadid].inputs[curbuf].buffer;
-        uint8_t* outbuff = ctx->workers[threadid].outputs[curout].filebuffer; // TODO: speed optimization possible here
+        uint8_t* outbuff = ctx->workers[threadid].outputs[curout].filebuffer;
+
+        /*
+        if (!job->output_file)
+            outbuff = job->output + (i*ctx->num_cores + threadid - job->start_block) * TSQ_BLOCK_SZ;
+        */
 
         ctx->workers[threadid].outputs[curout].job = ctx->workers[threadid].inputs[curbuf].job;
         ctx->workers[threadid].outputs[curout].size = 0;
@@ -586,6 +595,8 @@ void decompression_worker( uint32_t threadid, TSQDecompressionContext_MT* ctx )
 
         ctx->workers[threadid].currentWorkOutput++;
         ctx->workers[threadid].output_cv.notify_one();
+
+        i++;
     }
 }
 
@@ -781,7 +792,7 @@ extern "C" uint32_t tsqDecompressAsync_MT( TSQDecompressionContext_MT* ctx, uint
     }
     else
     {
-        job->output = (uint8_t*) malloc( job->outsize+32 );
+        job->output = (uint8_t*) malloc( job->outsize+MAX_CACHE_LINE_SIZE );
         pp = job->output;
 
         if (!job->output)

@@ -48,6 +48,7 @@
 extern "C" void tsqDeallocateContext(struct TSQCompressionContext* ctx)
 {
     if (ctx->refhash) align_free(ctx->refhash);
+//    if (ctx->refhash) free(ctx->refhash);
     free(ctx);
 }
 
