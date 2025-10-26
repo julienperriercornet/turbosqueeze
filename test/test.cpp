@@ -246,14 +246,16 @@ int test_tsq_decompress_async_mt()
         uint32_t jobid = tsqCompressAsync_MT(ccontext, (uint8_t*) testinput, strlen(testinput), false, (uint8_t**) &compressed, &compressed_sz, false, false, 0,
         [&retval,dcontext,&decompressed,&decompressed_sz,&compressed,&compressed_sz](uint32_t jid, bool success) { 
             if (success)
+            {
                 tsqDecompressAsync_MT(dcontext, (uint8_t*) compressed, compressed_sz, false, (uint8_t**) &decompressed, &decompressed_sz, false,
-            [&retval,&compressed,&decompressed,&decompressed_sz](uint32_t jid, bool success) {
-                free(compressed);
-                retval = memcmp( testinput, decompressed, decompressed_sz );
-                free(decompressed);
-            },
-            [](uint32_t,double){}
-            );
+                    [&retval,&compressed,&decompressed,&decompressed_sz](uint32_t jid, bool success) {
+                        free(compressed);
+                        retval = memcmp( testinput, decompressed, decompressed_sz );
+                        free(decompressed);
+                    },
+                    [](uint32_t,double){}
+                    );
+            }
         },
         [](uint32_t,double){}
         );

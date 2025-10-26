@@ -338,7 +338,8 @@ class TSQCompressionContext_MT {
 public:
 
     TSQCompressionContext_MT() : num_cores(1), workers(nullptr), threads(nullptr), reader(nullptr), writer(nullptr),
-        reader_mtx(), reader_cv(), input_blocks(0), queue(nullptr), queue_mtx(), queue_cv(), maxjobid(1), exit_request(false), verbose(false) {}
+        reader_mtx(), reader_cv(), input_blocks(0), queue(nullptr), queue_mtx(), queue_cv(), maxjobid(1), req_mtx(), req_cv(),
+        inflight_reqs(0), exit_request(false), verbose(false) {}
 
     uint32_t num_cores;
     struct TSQWorker* workers;
@@ -358,6 +359,9 @@ public:
     std::mutex queue_mtx;
     std::condition_variable queue_cv;
     uint32_t maxjobid;
+    std::mutex req_mtx;
+    std::condition_variable req_cv;
+    volatile int32_t inflight_reqs;
 
     // Exit
     bool exit_request;
@@ -393,7 +397,8 @@ class TSQDecompressionContext_MT {
 public:
 
     TSQDecompressionContext_MT() : num_cores(1), workers(nullptr), threads(nullptr), reader(nullptr), writer(nullptr),
-        reader_mtx(), reader_cv(), input_blocks(0), queue(nullptr), queue_mtx(), queue_cv(), maxjobid(1), exit_request(false), verbose(false) {}
+        reader_mtx(), reader_cv(), input_blocks(0), queue(nullptr), queue_mtx(), queue_cv(), maxjobid(1), req_mtx(), req_cv(),
+        inflight_reqs(0), exit_request(false), verbose(false) {}
 
     uint32_t num_cores;
     struct TSQWorker* workers;
@@ -414,6 +419,9 @@ public:
     std::mutex queue_mtx;
     std::condition_variable queue_cv;
     uint32_t maxjobid;
+    std::mutex req_mtx;
+    std::condition_variable req_cv;
+    volatile int32_t inflight_reqs;
 
     // Exit
     bool exit_request;
