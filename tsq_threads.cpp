@@ -260,7 +260,10 @@ void compression_write_worker( TSQCompressionContext_MT* ctx )
             {
                 job->completion_cb(job->jobid, !job->error_occurred); // Notify completion
             }
-            ctx->inflight_reqs--;
+            {
+                std::lock_guard<std::mutex> lock(ctx->req_mtx);
+                ctx->inflight_reqs--;
+            }
             ctx->req_cv.notify_all();
         }
 
@@ -389,7 +392,10 @@ extern "C" uint32_t tsqCompressAsync_MT( TSQCompressionContext_MT* ctx, uint8_t*
             user_progress_cb(jobid, progress);
     };
 
-    ctx->inflight_reqs++;
+    {
+        std::lock_guard<std::mutex> lock(ctx->req_mtx);
+        ctx->inflight_reqs++;
+    }
     ctx->req_cv.notify_all();
 
     ctx->queue_mtx.lock();
@@ -644,7 +650,10 @@ void decompression_write_worker( TSQDecompressionContext_MT* ctx )
             {
                 job->completion_cb(job->jobid, !job->error_occurred); // Notify completion
             }
-            ctx->inflight_reqs--;
+            {
+                std::lock_guard<std::mutex> lock(ctx->req_mtx);
+                ctx->inflight_reqs--;
+            }
             ctx->req_cv.notify_all();
         }
 
@@ -821,7 +830,10 @@ extern "C" uint32_t tsqDecompressAsync_MT( TSQDecompressionContext_MT* ctx, uint
         }
     };
 
-    ctx->inflight_reqs++;
+    {
+        std::lock_guard<std::mutex> lock(ctx->req_mtx);
+        ctx->inflight_reqs++;
+    }
     ctx->req_cv.notify_all();
 
     ctx->queue_mtx.lock();

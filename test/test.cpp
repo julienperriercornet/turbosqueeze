@@ -269,6 +269,62 @@ int test_tsq_decompress_async_mt()
 }
 
 
+int test_tsq_massive_async_mt()
+{
+    const int n_test = 1000;
+
+    TSQCompressionContext_MT* ccontext = tsqAllocateContextCompression_MT( false );
+    TSQDecompressionContext_MT* dcontext = tsqAllocateContextDecompression_MT( false );
+
+    if (ccontext && dcontext)
+    {
+        uint32_t retval = n_test;
+
+        char **compressed = (char**) malloc( n_test*sizeof(char*) );
+        size_t *compressed_sz = (size_t*) malloc( n_test*sizeof(size_t) );
+        char **decompressed = (char**) malloc( n_test*sizeof(char*) );
+        size_t *decompressed_sz = (size_t*) malloc( n_test*sizeof(size_t) );
+
+        memset( compressed, 0, n_test*sizeof(char*) );
+        memset( compressed_sz, 0, n_test*sizeof(size_t) );
+        memset( decompressed, 0, n_test*sizeof(char*) );
+        memset( decompressed_sz, 0, n_test*sizeof(size_t) );
+
+        size_t testinput_sz = strlen(testinput);
+
+        for (uint32_t i = 0; i < n_test; i++)
+        {
+            uint32_t jobid = tsqCompressAsync_MT(ccontext, (uint8_t*) testinput, testinput_sz, false, (uint8_t**) &compressed[i], &compressed_sz[i], false, false, 0,
+            [&retval,dcontext,&decompressed,&decompressed_sz,&compressed,&compressed_sz,i,testinput_sz](uint32_t jid, bool success) { 
+                if (success)
+                {
+                    tsqDecompressAsync_MT(dcontext, (uint8_t*) compressed[i], compressed_sz[i], false, (uint8_t**) &decompressed[i], &decompressed_sz[i], false,
+                        [&retval,&compressed,&decompressed,&decompressed_sz,i,testinput_sz](uint32_t jid, bool success) {
+                            free(compressed[i]);
+                            compressed[i] = nullptr;
+                            if (testinput_sz == decompressed_sz[i] && memcmp( testinput, decompressed[i], decompressed_sz[i] ) == 0)
+                                retval--;
+                            free(decompressed[i]);
+                            decompressed[i] = nullptr;
+                        },
+                        [](uint32_t,double){}
+                        );
+                }
+            },
+            [](uint32_t,double){}
+            );
+        }
+
+        tsqDeallocateContextCompression_MT(ccontext);
+        tsqDeallocateContextDecompression_MT(dcontext);
+
+        return retval;
+    }
+
+    return 1;
+}
+
+
 int main( int argc, const char** argv )
 {
     int status = -1;
@@ -293,6 +349,8 @@ int main( int argc, const char** argv )
         status = test_tsq_compress_async_mt();
     if (strcmp(argv[1], "test_tsq_decompress_async_mt") == 0)
         status = test_tsq_decompress_async_mt();
+    if (strcmp(argv[1], "test_tsq_massive_async_mt") == 0)
+        status = test_tsq_massive_async_mt();
 
     return status;
 }
