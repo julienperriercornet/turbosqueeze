@@ -73,6 +73,7 @@ class TSQJob;
  * Fields:
  *   buffer - Pointer to the main data buffer (input or output block).
  *   filebuffer - Pointer to a file buffer, if file I/O is involved.
+ *   job - Pointer to the associated TSQJob for this buffer.
  *   size - Size of the data in the buffer, in bytes.
  *   ext - Extension flags or metadata for the buffer (e.g., format extensions).
  *   compression_level - Compression level to be used for this buffer, if applicable.
@@ -87,7 +88,7 @@ struct TSQBuffer {
      */
     uint8_t* filebuffer;
     /**
-     * Pointer to the job.
+     * Pointer to the job associated with this buffer.
      */
     TSQJob* job;
     /**
@@ -113,14 +114,14 @@ struct TSQBuffer {
  * Fields:
  *   inputs - Vector of input buffers to be processed by the worker.
  *   n_inputs - Number of input buffers assigned to this worker.
- *   currentReadInput - Index of the next input buffer to be read.
- *   currentWorkInput - Index of the input buffer currently being processed.
+ *   currentReadInput - Index of the next input buffer to be read (64-bit).
+ *   currentWorkInput - Index of the input buffer currently being processed (64-bit).
  *   input_mtx - Mutex for synchronizing access to input buffers.
  *   input_cv - Condition variable for input buffer availability.
  *   outputs - Vector of output buffers produced by the worker.
  *   n_outputs - Number of output buffers assigned to this worker.
- *   currentWorkOutput - Index of the output buffer currently being written.
- *   currentWriteOutput - Index of the next output buffer to be written to disk or memory.
+ *   currentWorkOutput - Index of the output buffer currently being written (64-bit).
+ *   currentWriteOutput - Index of the next output buffer to be written to disk or memory (64-bit).
  *   output_mtx - Mutex for synchronizing access to output buffers.
  *   output_cv - Condition variable for output buffer availability.
  *   blocksPerWorker - Number of data blocks assigned to this worker for processing.
@@ -135,12 +136,12 @@ struct TSQWorker {
      */
     uint32_t n_inputs;
     /**
-     * Index of the next input buffer to be read by the worker.
+     * Index of the next input buffer to be read by the worker (64-bit).
      * Volatile for safe concurrent access.
      */
     volatile uint64_t currentReadInput;
     /**
-     * Index of the input buffer currently being processed.
+     * Index of the input buffer currently being processed (64-bit).
      * Volatile for safe concurrent access.
      */
     volatile uint64_t currentWorkInput;
@@ -162,12 +163,12 @@ struct TSQWorker {
      */
     uint32_t n_outputs;
     /**
-     * Index of the output buffer currently being written.
+     * Index of the output buffer currently being written (64-bit).
      * Volatile for safe concurrent access.
      */
     volatile uint64_t currentWorkOutput;
     /**
-     * Index of the next output buffer to be written to disk or memory.
+     * Index of the next output buffer to be written to disk or memory (64-bit).
      * Volatile for safe concurrent access.
      */
     volatile uint64_t currentWriteOutput;
@@ -187,7 +188,7 @@ struct TSQWorker {
 };
 
 /*
- * \struct TSQJob
+ * \class TSQJob
  * @brief Job descriptor for asynchronous or multi-threaded compression/decompression.
  *
  * Represents a single unit of work, which may be a file or a memory buffer.
@@ -201,9 +202,13 @@ struct TSQWorker {
  *   compression_level - Compression level to use for this job.
  *   input_stream - File stream for input, if applicable.
  *   input_size - Size of the input data (redundant with 'size' in some cases).
+ *   start_block - Index of the first block to process (for partial jobs).
+ *   n_blocks - Number of blocks to process (for partial jobs).
  *   output - Pointer to output data buffer or filename (if output_file is true).
  *   outsize - Size of the output data in bytes.
  *   output_file - If true, 'output' is a filename; if false, a memory buffer.
+ *   output_stream - File stream for output, if applicable.
+ *   error_occurred - Flag indicating if an error occurred during processing.
  *   completion_cb - Callback function invoked upon job completion (jobid, success).
  *   progress_cb - Callback function invoked to report progress (jobid, progress [0.0-1.0]).
  */
@@ -319,18 +324,19 @@ public:
  * Fields:
  *   num_cores - Number of worker threads (cores) used for compression.
  *   workers - Pointer to array of TSQWorker structures, one per thread.
- *   currentjob - Pointer to the current job being processed.
  *   threads - Array of thread pointers for worker threads.
  *   reader - Thread responsible for reading input data and dispatching jobs.
  *   writer - Thread responsible for writing output data.
  *   reader_mtx - Mutex for synchronizing access to the reader thread.
  *   reader_cv - Condition variable for reader thread coordination.
- *   blocks_writen - Number of blocks written so far (progress tracking).
- *   input_blocks - Total number of input blocks to process.
+ *   input_blocks - Total number of input blocks to process (64-bit).
  *   queue - Pointer to the job queue for pending jobs.
  *   queue_mtx - Mutex for synchronizing access to the job queue.
  *   queue_cv - Condition variable for job queue coordination.
  *   maxjobid - Maximum job ID assigned so far.
+ *   req_mtx - Mutex for synchronizing inflight request counter.
+ *   req_cv - Condition variable for inflight request coordination.
+ *   inflight_reqs - Number of inflight requests (volatile int32_t).
  *   exit_request - If true, signals threads to exit.
  *   verbose - If true, enables verbose logging for debugging or progress reporting.
  */
@@ -378,18 +384,20 @@ public:
  * Fields:
  *   num_cores - Number of worker threads (cores) used for decompression.
  *   workers - Pointer to array of TSQWorker structures, one per thread.
- *   currentjob - Pointer to the current job being processed.
  *   threads - Array of thread pointers for worker threads.
  *   reader - Thread responsible for reading input data and dispatching jobs.
  *   writer - Thread responsible for writing output data.
  *   reader_mtx - Mutex for synchronizing access to the reader thread.
  *   reader_cv - Condition variable for reader thread coordination.
- *   blocks_writen - Number of blocks written so far (progress tracking).
- *   input_blocks - Total number of input blocks to process.
+ *   input_blocks - Total number of input blocks to process (64-bit).
+ *   blocks_writen - Number of blocks written so far (64-bit, progress tracking).
  *   queue - Pointer to the job queue for pending jobs.
  *   queue_mtx - Mutex for synchronizing access to the job queue.
  *   queue_cv - Condition variable for job queue coordination.
  *   maxjobid - Maximum job ID assigned so far.
+ *   req_mtx - Mutex for synchronizing inflight request counter.
+ *   req_cv - Condition variable for inflight request coordination.
+ *   inflight_reqs - Number of inflight requests (volatile int32_t).
  *   exit_request - If true, signals threads to exit.
  *   verbose - If true, enables verbose logging for debugging or progress reporting.
  */
@@ -625,6 +633,13 @@ extern "C" {
      */
     void tsqDeallocateContext(struct TSQCompressionContext* ctx);
 
+    /**
+     * Initializes a TSQCompressionContext for block-based compression.
+     *
+     * @param ctx Pointer to a TSQCompressionContext structure to initialize.
+     *
+     * @note This function must be called before using the context for compression.
+     */
     void tsqInit( struct TSQCompressionContext* ctx );
 
     /**
