@@ -74,6 +74,12 @@ extern "C" struct TSQCompressionContext* tsqAllocateContext()
 }
 
 
+extern "C" void tsqInit( struct TSQCompressionContext* ctx )
+{
+    memset( ctx->refhash, 0, TSQ_HASH_SZ );
+}
+
+
 extern void compression_read_worker( TSQCompressionContext_MT* ctx );
 extern void compression_worker( uint32_t threadid, TSQCompressionContext_MT* ctx );
 extern void compression_write_worker( TSQCompressionContext_MT* ctx );

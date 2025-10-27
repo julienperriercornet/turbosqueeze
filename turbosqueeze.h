@@ -447,7 +447,7 @@ extern "C" {
      * @note The function handles reading, compressing, and writing in blocks. It writes a TSQ1 header to the output.
      * @note Input and output streams must be valid and open. The function does not close the streams.
      */
-    void compress( FILE* in, FILE* out, bool useextensions, uint32_t level );
+    void tsqCompress( FILE* in, FILE* out, bool useextensions, uint32_t level );
 
     /**
      * Decompresses data from an input file stream and writes the decompressed output to an output file stream.
@@ -459,7 +459,7 @@ extern "C" {
      * @note The function expects a valid TSQ1 header in the input stream. It handles reading, decompressing, and writing in blocks.
      * @note Input and output streams must be valid and open. The function does not close the streams.
      */
-    void decompress( FILE* in, FILE* out );
+    void tsqDecompress( FILE* in, FILE* out );
 
     /**
      * Allocates and initializes a multi-threaded compression context.
@@ -624,6 +624,8 @@ extern "C" {
      * @note After this call, the context pointer is invalid and must not be used.
      */
     void tsqDeallocateContext(struct TSQCompressionContext* ctx);
+
+    void tsqInit( struct TSQCompressionContext* ctx );
 
     /**
      * Encodes (compresses) a single block of data using the provided compression context.

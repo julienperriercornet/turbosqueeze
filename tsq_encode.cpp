@@ -57,7 +57,6 @@ void tsqEncodeNoext( struct TSQCompressionContext* ctx, uint8_t *input, uint8_t 
     uint32_t i = 0, j = 3;
     uint32_t last_control = j++;
     uint32_t last_size = j++;
-    uint32_t currblock = 0;
     uint32_t rep_last_i = 0;
     uint32_t n_sym = 0;
     uint32_t last_i;
@@ -141,14 +140,14 @@ void tsqEncodeNoext( struct TSQCompressionContext* ctx, uint8_t *input, uint8_t 
             k = (k > (rep_last_i - pos)) ? (rep_last_i - pos - 1) : k;
             if ( k < 4 ) break;
 
-            uint32_t matchlen = mlen[k];
-
             // Output the match offset to current pos
             offset = rep_last_i - pos; // rep_last_i might have changed
             if (!((offset-4) < 0xFFFB)) break;
 
             //assert( offset == (offset & 0xFFFF) );
             //assert( (offset + k) < rep_last_i );
+
+            uint32_t matchlen = mlen[k];
 
             output[j++] = offset & 0xFF;
             output[j++] = offset >> 8;
@@ -208,7 +207,6 @@ extern "C" void tsqEncode( struct TSQCompressionContext* ctx, uint8_t *input, ui
     uint32_t i = 0, j = 3;
     uint32_t last_control = j++;
     uint32_t last_size = j++;
-    uint32_t currblock = 0;
     uint32_t rep_last_i = 0;
     uint32_t n_sym = 0;
     uint32_t last_i;
@@ -293,23 +291,22 @@ extern "C" void tsqEncode( struct TSQCompressionContext* ctx, uint8_t *input, ui
 
             // Don't overlap with data which hasn't been yet decoded in the decoder.
             k = (k > (rep_last_i - pos)) ? (rep_last_i - pos - 1) : k;
-
-            uint32_t matchlen = mlen[k];
-
-            // Output the match offset to current pos
             if ( k < 4 ) break;
 
+            // Output the match offset to current pos
             offset = rep_last_i - pos; // rep_last_i might have changed
             if (!((offset-4) < 0xFFFB)) break;
 
             //assert( offset == (offset & 0xFFFF) );
             //assert( (offset + k) < rep_last_i );
 
+            uint32_t matchlen = mlen[k];
+
             output[j++] = offset & 0xFF;
             output[j++] = offset >> 8;
             i += matchlen < 3 ? (matchlen+2) << 4 : matchlen + 1;
 
-            // Complete/flush out control and size bytes?
+            // flush out control and size bytes?
             n_sym++;
             output[last_control] <<= 1; if ((n_sym & 7) == 0) last_control = j++;
             output[last_size] = (output[last_size] << 4) | matchlen; if ((n_sym & 1) == 0) { last_size = j++; rep_last_i = i; }

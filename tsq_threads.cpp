@@ -173,7 +173,7 @@ void compression_worker( uint32_t threadid, TSQCompressionContext_MT* ctx )
         // Compression logic
         if (inbuff != nullptr)
         {
-            tsq_init(compressctx);
+            tsqInit(compressctx);
             tsqEncode(compressctx, inbuff, outbuff, &worker.outputs[curout].size, worker.inputs[curin].size, worker.inputs[curin].ext);
         }
 

@@ -45,11 +45,10 @@
 #include "tsq_common.h"
 
 
-extern "C" void compress( FILE* in, FILE* out, bool use_extentions, uint32_t level )
+extern "C" void tsqCompress( FILE* in, FILE* out, bool use_extentions, uint32_t level )
 {
-    uint8_t* inbuff = (uint8_t*) align_alloc( MAX_CACHE_LINE_SIZE, 65536+TSQ_BLOCK_SZ*sizeof(uint8_t) );
+    uint8_t* inbuff = (uint8_t*) align_alloc( MAX_CACHE_LINE_SIZE, TSQ_BLOCK_SZ*sizeof(uint8_t) );
     uint8_t* outbuff = (uint8_t*) align_alloc( MAX_CACHE_LINE_SIZE, TSQ_OUTPUT_SZ*sizeof(uint8_t) );
-    memset( inbuff, 0, 65536 );
 
     struct TSQCompressionContext* ctx = tsqAllocateContext();
 
@@ -69,12 +68,12 @@ extern "C" void compress( FILE* in, FILE* out, bool use_extentions, uint32_t lev
 
         size_t to_read = remainsz > TSQ_BLOCK_SZ ? TSQ_BLOCK_SZ : remainsz;
 
-        while ( to_read > 0 && to_read == fread( inbuff+65536, 1, to_read, in ) )
+        while ( to_read > 0 && to_read == fread( inbuff, 1, to_read, in ) )
         {
             uint32_t outputSize;
 
-            tsq_init( ctx );
-            tsqEncode( ctx, inbuff+65536, outbuff, &outputSize, to_read, use_extentions );
+            tsqInit( ctx );
+            tsqEncode( ctx, inbuff, outbuff, &outputSize, to_read, use_extentions );
 
             uint32_t real_out_size = outputSize;
             if (use_extentions) outputSize += 0x800000;
@@ -96,7 +95,7 @@ extern "C" void compress( FILE* in, FILE* out, bool use_extentions, uint32_t lev
 }
 
 
-extern "C" void decompress( FILE* in, FILE* out )
+extern "C" void tsqDecompress( FILE* in, FILE* out )
 {
     uint8_t* inbuff = (uint8_t*) align_alloc( MAX_CACHE_LINE_SIZE, 65536+TSQ_OUTPUT_SZ*sizeof(uint8_t) );
     uint8_t* outbuff = (uint8_t*) align_alloc( MAX_CACHE_LINE_SIZE, TSQ_BLOCK_SZ*sizeof(uint8_t)+32 );

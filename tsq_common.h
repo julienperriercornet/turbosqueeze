@@ -28,11 +28,6 @@
 #include <cstring>
 
 
-static void tsq_init( struct TSQCompressionContext* ctx )
-{
-    memset( ctx->refhash, 0, TSQ_HASH_SZ );
-}
-
 static inline void tsq_memcpy16( void* dst, void* src )
 {
 #ifdef AVX2
