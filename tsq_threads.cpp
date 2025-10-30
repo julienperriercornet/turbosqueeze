@@ -332,7 +332,7 @@ extern "C" uint32_t tsqCompressAsync_MT( TSQCompressionContext_MT* ctx, uint8_t*
 
         fwrite("TSQ1", 1, 4, job->output_stream);
         fwrite(&job->n_blocks, 1, 4, job->output_stream);
-        fwrite(&job->input_size, 1, sizeof(size_t), job->output_stream);
+        fwrite(&job->input_size, 1, sizeof(uint64_t), job->output_stream);
     }
     else
     {
@@ -354,7 +354,7 @@ extern "C" uint32_t tsqCompressAsync_MT( TSQCompressionContext_MT* ctx, uint8_t*
         job->outsize = 0;
         memcpy(job->output, "TSQ1", 4);
         memcpy(job->output + 4, &job->n_blocks, 4);
-        memcpy(job->output + 8, &job->input_size, sizeof(size_t));
+        memcpy(job->output + 8, &job->input_size, sizeof(uint64_t));
         job->output += 16; // Move output pointer past the header
         job->outsize += 16;
     }
@@ -727,7 +727,7 @@ extern "C" uint32_t tsqDecompressAsync_MT( TSQDecompressionContext_MT* ctx, uint
 
         uint32_t read_magic = fread(&magic[0], 1, 4, job->input_stream);
         uint32_t read_block = fread(&n_blocks, 1, 4, job->input_stream);
-        uint32_t read_is = fread(&job->outsize, 1, sizeof(size_t), job->input_stream);
+        uint32_t read_is = fread(&job->outsize, 1, sizeof(uint64_t), job->input_stream);
 
         if (strncmp(&magic[0], &magic_key[0], 4) != 0)
         {
@@ -752,7 +752,7 @@ extern "C" uint32_t tsqDecompressAsync_MT( TSQDecompressionContext_MT* ctx, uint
         }
 
         memcpy(&n_blocks, job->input + 4, 4);
-        memcpy(&job->outsize, job->input + 8, sizeof(size_t));
+        memcpy(&job->outsize, job->input + 8, sizeof(uint64_t));
         job->input += 16; // Move input pointer past the header
     }
 

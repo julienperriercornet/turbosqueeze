@@ -248,7 +248,7 @@ public:
     /**
      * Size of the input data in bytes.
      */
-    size_t size;
+    uint64_t size;
     /**
      * If true, 'input' is interpreted as a filename; if false, as a memory buffer.
      */
@@ -272,7 +272,7 @@ public:
     /**
      * Size of the input data (may be redundant with 'size').
      */
-    size_t input_size;
+    uint64_t input_size;
     /**
      * Start block to process
      */
@@ -289,7 +289,7 @@ public:
     /**
      * Size of the output data in bytes.
      */
-    size_t outsize;
+    uint64_t outsize;
     /**
      * If true, 'output' is interpreted as a filename; if false, as a memory buffer.
      */
