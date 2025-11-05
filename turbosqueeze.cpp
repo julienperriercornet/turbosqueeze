@@ -55,7 +55,7 @@ extern "C" void tsqCompress( FILE* in, FILE* out, bool use_extentions, uint32_t 
     if (ctx && inbuff && outbuff)
     {
         fseek( in, 0, SEEK_END );
-        size_t remainsz = ftell( in );
+        uint64_t remainsz = ftell( in );
         fseek( in, 0, SEEK_SET );
 
         uint32_t n_blocks = (remainsz % TSQ_BLOCK_SZ != 0 ? 1 : 0) + (remainsz / TSQ_BLOCK_SZ);
@@ -64,7 +64,7 @@ extern "C" void tsqCompress( FILE* in, FILE* out, bool use_extentions, uint32_t 
         fwrite("TSQ1", 1, 4, out);
         uint32_t n_blocks_le = n_blocks;
         fwrite(&n_blocks_le, 1, 4, out);
-        fwrite(&remainsz, 1, sizeof(size_t), out);
+        fwrite(&remainsz, 1, sizeof(uint64_t), out);
 
         size_t to_read = remainsz > TSQ_BLOCK_SZ ? TSQ_BLOCK_SZ : remainsz;
 
@@ -111,8 +111,8 @@ extern "C" void tsqDecompress( FILE* in, FILE* out )
     if (fread(&n_blocks, 1, 4, in) != 4) {
         return;
     }
-    size_t total_uncompressed = 0;
-    if (fread(&total_uncompressed, 1, sizeof(size_t), in) != sizeof(size_t)) {
+    uint64_t total_uncompressed = 0;
+    if (fread(&total_uncompressed, 1, sizeof(uint64_t), in) != sizeof(uint64_t)) {
         return;
     }
 
