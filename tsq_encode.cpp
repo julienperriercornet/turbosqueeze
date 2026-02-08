@@ -40,11 +40,20 @@
 #include "tsq_encode.h"
 #include "tsq_common.h"
 
-
 static uint8_t mlen[65] = { 0, 0, 0, 0, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2 };
 
+#include <immintrin.h>
 
+inline unsigned int
+stdc_trailing_zeros_ull(unsigned long long int __value)
+{ return stdc_trailing_zeros_ull(__value); }
+
+static uint32_t nb;
+/*
+Those above 5 lines make it able to build on CachyOS
+Don't ask me how it works, i usually write code in lua not cpp
+ */
 void tsqEncodeNoext( struct TSQCompressionContext* ctx, uint8_t *input, uint8_t *output, uint32_t *outputSize, uint32_t inputSize )
 {
     const uint32_t size = inputSize;
@@ -62,6 +71,7 @@ void tsqEncodeNoext( struct TSQCompressionContext* ctx, uint8_t *input, uint8_t 
     uint32_t last_i;
     uint32_t current, currhash;
     uint32_t pos, offset;
+
 
     do
     {
@@ -94,7 +104,7 @@ void tsqEncodeNoext( struct TSQCompressionContext* ctx, uint8_t *input, uint8_t 
                     output[last_control] = (output[last_control] << 1) | 1; if ((n_sym & 7) == 0) last_control = j++;
                     output[last_size] = (output[last_size] << 4) | (incr - 1); if ((n_sym & 1) == 0) { last_size = j++; rep_last_i = last_i; }
                 }
-                while ((i-last_i) > 0) ;                
+                while ((i-last_i) > 0) ;
             }
         }
         while ( (i<size) && !((current == *((uint32_t*) &input[pos])) && ((offset - 4) < 0xFFFB))) ;
@@ -126,13 +136,13 @@ void tsqEncodeNoext( struct TSQCompressionContext* ctx, uint8_t *input, uint8_t 
             uint64_t* in1 = (uint64_t*) &input[i];
             uint64_t* in2 = (uint64_t*) &input[pos];
             uint64_t xres = (*in1) ^ (*in2);
-            uint32_t k = stdc_trailing_zeros_ull( xres ) >> 3, nb;
+            uint32_t k = stdc_trailing_zeros_ull(xres) >> 3, nb;
             if (k==8)
             {
                 in1++;
                 in2++;
                 xres = (*in1) ^ (*in2);
-                nb = stdc_trailing_zeros_ull( xres ) >> 3;
+                nb = stdc_trailing_zeros_ull(xres) >> 3;
                 k += nb;
             }
 
@@ -244,7 +254,7 @@ extern "C" void tsqEncode( struct TSQCompressionContext* ctx, uint8_t *input, ui
                     output[last_control] = (output[last_control] << 1) | 1; if ((n_sym & 7) == 0) last_control = j++;
                     output[last_size] = (output[last_size] << 4) | (incr - 1); if ((n_sym & 1) == 0) { last_size = j++; rep_last_i = last_i; }
                 }
-                while ((i-last_i) > 0) ;                
+                while ((i-last_i) > 0) ;
             }
         }
         while ( (i<size) && !((current == *((uint32_t*) &input[pos])) && ((offset - 4) < 0xFFFB))) ;
@@ -276,7 +286,7 @@ extern "C" void tsqEncode( struct TSQCompressionContext* ctx, uint8_t *input, ui
             uint64_t* in1 = (uint64_t*) &input[i];
             uint64_t* in2 = (uint64_t*) &input[pos];
             uint64_t xres = (*in1) ^ (*in2);
-            uint32_t k = stdc_trailing_zeros_ull( xres ) >> 3, nb;
+            uint32_t k = stdc_trailing_zeros_ull(xres) >> 3, nb;
             if (k==8)
             {
                 do
@@ -284,7 +294,7 @@ extern "C" void tsqEncode( struct TSQCompressionContext* ctx, uint8_t *input, ui
                     in1++;
                     in2++;
                     xres = (*in1) ^ (*in2);
-                    nb = stdc_trailing_zeros_ull( xres ) >> 3;
+                    nb = stdc_trailing_zeros_ull(xres) >> 3;
                     k += nb;
                 } while (nb == 8 && k < 64) ;
             }
@@ -340,4 +350,3 @@ extern "C" void tsqEncode( struct TSQCompressionContext* ctx, uint8_t *input, ui
 
     *outputSize = j;
 }
-
