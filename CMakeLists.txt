@@ -6,8 +6,19 @@ project(
     LANGUAGES CXX)
 
 option(AVX2 "Build with AVX2 optimisations" OFF)
+option(ENABLE_ASAN "Build with AddressSanitizer instrumentation" OFF)
 
 include(CTest)
+
+if (ENABLE_ASAN)
+if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+add_link_options(-fsanitize=address)
+message("AddressSanitizer enabled")
+else()
+message(FATAL_ERROR "ENABLE_ASAN is only supported with GCC and Clang")
+endif()
+endif()
 
 if (AVX2)
 add_definitions(-mavx2)
@@ -32,6 +43,10 @@ set(
     tsq_encode.cpp
     tsq_decode.h
     tsq_decode.cpp
+    tsq_encode2.cpp
+    tsq_encode2_hist.cpp
+    tsq_encode2_opt.cpp
+    tsq_decode2.cpp
     platform.h
     turbosqueeze.cpp
     tsq_threads.cpp)

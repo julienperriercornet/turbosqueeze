@@ -48,10 +48,16 @@
 extern "C" void tsqDeallocateContext(struct TSQCompressionContext* ctx)
 {
     if (ctx->refhash) align_free(ctx->refhash);
-//    if (ctx->refhash) free(ctx->refhash);
+    //if (ctx->refhash) free(ctx->refhash);
     free(ctx);
 }
 
+void tsqDeallocateContextHist(struct TSQCompressionContextHist* ctx)
+{
+    if (ctx->cnthash) align_free(ctx->cnthash);
+    if (ctx->refhash) align_free(ctx->refhash);
+    free(ctx);
+}
 
 extern "C" struct TSQCompressionContext* tsqAllocateContext()
 {
@@ -74,9 +80,66 @@ extern "C" struct TSQCompressionContext* tsqAllocateContext()
 }
 
 
+extern "C" struct TSQCompressionContextHist* tsqAllocateContextHist( uint32_t level )
+{
+    struct TSQCompressionContextHist* context = (struct TSQCompressionContextHist*) malloc( sizeof(struct TSQCompressionContextHist) );
+
+    if (context)
+    {
+        context->refhash = nullptr;
+        context->cnthash = nullptr;
+        context->histent = (1 << (1+level));
+        //context->refhash = (uint16_t*) malloc( context->histent*TSQ_HASH_HIST_SZ );
+        context->refhash = (uint16_t*) align_alloc( MAX_CACHE_LINE_SIZE, context->histent*TSQ_HASH_HIST_SZ );
+        context->cnthash = (uint32_t*) align_alloc( MAX_CACHE_LINE_SIZE, TSQ_HASH_HIST_SZ*2 );
+
+        if (!context->refhash || !context->cnthash)
+        {
+            tsqDeallocateContextHist(context);
+            context = nullptr;
+        }
+    }
+
+    return context;
+}
+
+
 extern "C" void tsqInit( struct TSQCompressionContext* ctx )
 {
     memset( ctx->refhash, 0, TSQ_HASH_SZ );
+}
+
+
+extern "C" void tsqInitHist( struct TSQCompressionContextHist* ctx )
+{
+    memset( ctx->refhash, 0, ctx->histent*TSQ_HASH_HIST_SZ );
+    memset( ctx->cnthash, 0, 2*TSQ_HASH_HIST_SZ );
+}
+
+void tsqDeallocateContextOpt(TSQOptContext* ctx)
+{
+    if (ctx->sorthits) free(ctx->sorthits);
+    if (ctx->reverse_sorthits) free(ctx->reverse_sorthits);
+    delete ctx;
+}
+
+TSQOptContext* tsqAllocateContextOpt()
+{
+    TSQOptContext* ctx = new TSQOptContext();
+
+    if (ctx)
+    {
+        ctx->sorthits = (uint32_t*) malloc( TSQ_BLOCK_SZ * sizeof(uint32_t) );
+        ctx->reverse_sorthits = (uint32_t*) malloc( TSQ_BLOCK_SZ * sizeof(uint32_t) );
+
+        if (!ctx->sorthits || !ctx->reverse_sorthits)
+        {
+            tsqDeallocateContextOpt(ctx);
+            ctx = nullptr;
+        }
+    }
+
+    return ctx;
 }
 
 
@@ -86,9 +149,9 @@ extern void compression_write_worker( TSQCompressionContext_MT* ctx );
 
 
 
-extern "C" struct TSQCompressionContext_MT* tsqAllocateContextCompression_MT( bool verbose )
+extern "C" struct TSQCompressionContext_MT* tsqAllocateContextCompression_MT( uint32_t n_threads, bool verbose )
 {
-    uint32_t num_cores = std::thread::hardware_concurrency();
+    uint32_t num_cores = std::min( n_threads, std::thread::hardware_concurrency() );
     if (num_cores == 0) num_cores = 1;
 
     TSQCompressionContext_MT* ctx = new TSQCompressionContext_MT();
@@ -131,7 +194,7 @@ extern "C" struct TSQCompressionContext_MT* tsqAllocateContextCompression_MT( bo
     ctx->verbose = verbose;
 
     // initialize threads and job queue
-    ctx->exit_request = false;
+    ctx->exit_request.store(false);
     ctx->threads = new std::thread*[num_cores];
     ctx->reader = new std::thread( compression_read_worker, ctx );
     ctx->writer = new std::thread( compression_write_worker, ctx );
@@ -150,13 +213,16 @@ extern "C" void tsqDeallocateContextCompression_MT(TSQCompressionContext_MT* ctx
     {
         std::unique_lock<std::mutex> lock(ctx->req_mtx);
         ctx->req_cv.wait(lock, [ctx] {
-            return ctx->inflight_reqs == 0;
+            return ctx->inflight_reqs.load() == 0;
         });
     }
 
     // Signal threads to exit
-    ctx->exit_request = true;
+    ctx->exit_request.store(true);
+
+    { std::lock_guard<std::mutex> lock(ctx->queue_mtx); }
     ctx->queue_cv.notify_all();
+    { std::lock_guard<std::mutex> lock(ctx->reader_mtx); }
     ctx->reader_cv.notify_all();
 
     // Join threads
@@ -167,7 +233,9 @@ extern "C" void tsqDeallocateContextCompression_MT(TSQCompressionContext_MT* ctx
     if (ctx->threads) {
         for (uint32_t i = 0; i < ctx->num_cores; ++i) {
             if (ctx->threads[i]) {
+                { std::lock_guard<std::mutex> lock(ctx->workers[i].input_mtx); }
                 ctx->workers[i].input_cv.notify_all();
+                { std::lock_guard<std::mutex> lock(ctx->workers[i].output_mtx); }
                 ctx->workers[i].output_cv.notify_all();
                 ctx->threads[i]->join();
                 delete ctx->threads[i];
@@ -176,6 +244,10 @@ extern "C" void tsqDeallocateContextCompression_MT(TSQCompressionContext_MT* ctx
         delete[] ctx->threads;
     }
     if (ctx->writer) {
+        for (uint32_t i = 0; i < ctx->num_cores; ++i) {
+            { std::lock_guard<std::mutex> lock(ctx->workers[i].output_mtx); }
+            ctx->workers[i].output_cv.notify_all();
+        }
         ctx->writer->join();
         delete ctx->writer;
     }
@@ -206,9 +278,9 @@ extern void decompression_worker( uint32_t threadid, TSQDecompressionContext_MT*
 extern void decompression_write_worker( TSQDecompressionContext_MT* ctx );
 
 
-extern "C" struct TSQDecompressionContext_MT* tsqAllocateContextDecompression_MT( bool verbose )
+extern "C" struct TSQDecompressionContext_MT* tsqAllocateContextDecompression_MT( uint32_t n_threads, bool verbose )
 {
-    uint32_t num_cores = std::thread::hardware_concurrency();
+    uint32_t num_cores = std::min( n_threads, std::thread::hardware_concurrency() );
     if (num_cores == 0) num_cores = 1;
 
     TSQDecompressionContext_MT* ctx = new TSQDecompressionContext_MT();
@@ -252,7 +324,7 @@ extern "C" struct TSQDecompressionContext_MT* tsqAllocateContextDecompression_MT
     ctx->verbose = verbose;
 
     // initialize threads and job queue
-    ctx->exit_request = false;
+    ctx->exit_request.store(false);
     ctx->threads = new std::thread*[num_cores];
     for (uint32_t i = 0; i < num_cores; ++i) {
         ctx->threads[i] = new std::thread( decompression_worker, i, ctx );
@@ -271,13 +343,16 @@ extern "C" void tsqDeallocateContextDecompression_MT(struct TSQDecompressionCont
     {
         std::unique_lock<std::mutex> lock(ctx->req_mtx);
         ctx->req_cv.wait(lock, [ctx] {
-            return ctx->inflight_reqs == 0;
+            return ctx->inflight_reqs.load() == 0;
         });
     }
 
     // Signal threads to exit
-    ctx->exit_request = true;
+    ctx->exit_request.store(true);
+
+    { std::lock_guard<std::mutex> lock(ctx->queue_mtx); }
     ctx->queue_cv.notify_all();
+    { std::lock_guard<std::mutex> lock(ctx->reader_mtx); }
     ctx->reader_cv.notify_all();
 
     // Join threads
@@ -288,7 +363,9 @@ extern "C" void tsqDeallocateContextDecompression_MT(struct TSQDecompressionCont
     if (ctx->threads) {
         for (uint32_t i = 0; i < ctx->num_cores; ++i) {
             if (ctx->threads[i]) {
+                { std::lock_guard<std::mutex> lock(ctx->workers[i].input_mtx); }
                 ctx->workers[i].input_cv.notify_all();
+                { std::lock_guard<std::mutex> lock(ctx->workers[i].output_mtx); }
                 ctx->workers[i].output_cv.notify_all();
                 ctx->threads[i]->join();
                 delete ctx->threads[i];
@@ -297,6 +374,10 @@ extern "C" void tsqDeallocateContextDecompression_MT(struct TSQDecompressionCont
         delete[] ctx->threads;
     }
     if (ctx->writer) {
+        for (uint32_t i = 0; i < ctx->num_cores; ++i) {
+            { std::lock_guard<std::mutex> lock(ctx->workers[i].output_mtx); }
+            ctx->workers[i].output_cv.notify_all();
+        }
         ctx->writer->join();
         delete ctx->writer;
     }

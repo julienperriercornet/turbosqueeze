@@ -3,7 +3,7 @@
 /*
  * Turbosqueeze API.
  *
- * Copyright (c) 2024-2025 Julien Perrier-cornet
+ * Copyright (c) 2024-2026 Julien Perrier-cornet
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -27,11 +27,13 @@
 
 #include <cstdint>
 #include <vector>
+#include <stack>
 #include <thread>
 #include <queue>
 #include <mutex>
 #include <condition_variable>
 #include <functional>
+#include <atomic>
 
 
 #define TSQ_BLOCK_BITS (22)
@@ -42,6 +44,9 @@
 #define TSQ_HASH_SZ ((1<<TSQ_HASH_BITS) * sizeof(uint16_t))
 #define TSQ_HASH_MASK ((1<<TSQ_HASH_BITS) - 1)
 
+#define TSQ_HASH_HIST_BITS (19)
+#define TSQ_HASH_HIST_SZ ((1<<TSQ_HASH_BITS) * sizeof(uint16_t))
+#define TSQ_HASH_HIST_MASK ((1<<TSQ_HASH_BITS) - 1)
 
 /*
  * \struct TSQCompressionContext
@@ -61,6 +66,94 @@ struct TSQCompressionContext {
      */
     uint16_t *refhash;
 };
+
+
+/**
+ * @struct TSQCompressionContextHist
+ * @brief Low-level compression context with history-based matching for single-threaded use.
+ *
+ * Extends the basic hash-based approach with a sliding history window per hash slot,
+ * allowing the encoder to evaluate multiple match candidates and select the best one.
+ * Used by compression levels 1 through 5.
+ */
+struct TSQCompressionContextHist {
+    /**
+     * Pointer to the reference hash table mapping 4-byte patterns to buffer positions.
+     * Each slot stores the most recent position that hashed to that slot.
+     */
+    uint16_t *refhash;
+    /**
+     * Number of history entries per hash slot. Derived from the compression level:
+     * histent = 1 << (1 + level). Higher values increase match quality at the cost of speed.
+     */
+    uint32_t histent;
+    /**
+     * Pointer to the count array tracking the cycling write index for each hash slot.
+     * Used to implement circular replacement within the history ring buffer.
+     */
+    uint32_t *cnthash;
+};
+
+
+
+/**
+ * @class TSQOptContext
+ * @brief Compression context for the optimal encoder (compression level 6).
+ *
+ * Uses a suffix-array approach: all rotations of the input block are sorted
+ * lexicographically, then a backward greedy LZ parser walks the sorted array
+ * to find the best matches. The resulting token sequence (literals and matches)
+ * is stored on a stack and later serialized into the TSQ2 compressed format.
+ */
+class TSQOptContext {
+public:
+
+    /**
+     * @class TSQData
+     * @brief Represents a single token emitted by the backward greedy LZ parser.
+     *
+     * Each token is either a literal run or an LZ match reference.
+     * Tokens are pushed onto the path stack in reverse order and popped
+     * sequentially during output serialization.
+     */
+    class TSQData {
+    public:
+        /** Start position of this token in the original input buffer. */
+        uint32_t pos;
+        /** For matches (type==1): the source position that this match copies from.
+         *  Unused for literals (type==2). */
+        uint32_t hitpos;
+        /** Length of this token in bytes. For matches, must be >= 4. */
+        uint16_t len;
+        /** Token type: 1 = LZ match, 2 = literal run. */
+        uint8_t type;
+
+        TSQData() : pos(0), hitpos(0), len(0), type(0) {}
+        TSQData(const TSQData &other) : pos(other.pos), hitpos(other.hitpos), len(other.len), type(other.type) {}
+    };
+
+    /**
+     * Sorted rotation indices. After sorting, sorthits[i] contains the buffer
+     * position whose rotation ranks i-th lexicographically. Size: inputSize entries.
+     */
+    uint32_t* sorthits;
+    /**
+     * Inverse mapping of sorthits. reverse_sorthits[pos] gives the rank of the
+     * rotation starting at position pos. Used to locate a position's neighborhood
+     * in the sorted array for fast LZ match search.
+     */
+    uint32_t* reverse_sorthits;
+    /**
+     * Stack of encoding tokens built by the backward greedy parser.
+     * Tokens are pushed back-to-front and popped front-to-back during output.
+     */
+    std::stack<TSQData> path;
+
+    TSQOptContext() : sorthits(nullptr), reverse_sorthits(nullptr), path() {}
+    TSQOptContext(const TSQOptContext &other) : sorthits(other.sorthits), reverse_sorthits(other.reverse_sorthits), path(other.path) {}
+
+};
+
 
 class TSQJob;
 
@@ -103,6 +196,13 @@ struct TSQBuffer {
      * Compression level to be used for this buffer, if applicable.
      */
     uint32_t compression_level;
+
+    /**
+     * Stream format version for this buffer's block:
+     * 1 = TSQ1 (legacy format with extensions support),
+     * 2 = TSQ2 (current format, supports multiple compression levels).
+     */
+    uint32_t version;
 };
 
 /*
@@ -139,12 +239,12 @@ struct TSQWorker {
      * Index of the next input buffer to be read by the worker (64-bit).
      * Volatile for safe concurrent access.
      */
-    volatile uint64_t currentReadInput;
+    std::atomic<uint64_t> currentReadInput;
     /**
      * Index of the input buffer currently being processed (64-bit).
      * Volatile for safe concurrent access.
      */
-    volatile uint64_t currentWorkInput;
+    std::atomic<uint64_t> currentWorkInput;
     /**
      * Mutex for synchronizing access to input buffers.
      */
@@ -166,12 +266,12 @@ struct TSQWorker {
      * Index of the output buffer currently being written (64-bit).
      * Volatile for safe concurrent access.
      */
-    volatile uint64_t currentWorkOutput;
+    std::atomic<uint64_t> currentWorkOutput;
     /**
      * Index of the next output buffer to be written to disk or memory (64-bit).
      * Volatile for safe concurrent access.
      */
-    volatile uint64_t currentWriteOutput;
+    std::atomic<uint64_t> currentWriteOutput;
     /**
      * Mutex for synchronizing access to output buffers.
      */
@@ -218,7 +318,7 @@ public:
     /**
      * Constructor initializes members to default values.
      */
-    TSQJob() : input(nullptr), size(0), input_file(false), jobid(0), use_extensions(false), compression_level(0), input_stream(nullptr),
+    TSQJob() : input(nullptr), size(0), input_file(false), jobid(0), use_extensions(false), compression_level(0), compression_method(2), input_stream(nullptr),
         input_size(0), start_block(0), n_blocks(0), output(nullptr), outsize(0), output_file(false), output_stream(nullptr), error_occurred(false),
         completion_cb(nullptr), progress_cb(nullptr)
     {
@@ -265,6 +365,13 @@ public:
      * Compression level to use for this job.
      */
     uint32_t compression_level;
+    /**
+     * Stream format version / compression method for this job:
+     * 1 = TSQ1 (legacy format with extension support),
+     * 2 = TSQ2 (current format, supports levels 0-6).
+     * Written into the stream header and propagated to worker buffers.
+     */
+    uint32_t compression_method;
     /**
      * File stream for input, if applicable.
      */
@@ -319,26 +426,15 @@ public:
  * @class TSQCompressionContext_MT
  * @brief Multi-threaded compression context for parallel file or buffer compression.
  *
- * Manages worker threads, job queues, and synchronization for high-performance compression.
+ * Orchestrates a pipeline of reader, compression workers, and writer threads.
+ * The reader thread reads input blocks from files or memory and dispatches them
+ * to worker threads via TSQBuffer queues. Each worker compresses its block
+ * independently. The writer thread collects compressed blocks in order and
+ * writes them to the output file or buffer.
  *
- * Fields:
- *   num_cores - Number of worker threads (cores) used for compression.
- *   workers - Pointer to array of TSQWorker structures, one per thread.
- *   threads - Array of thread pointers for worker threads.
- *   reader - Thread responsible for reading input data and dispatching jobs.
- *   writer - Thread responsible for writing output data.
- *   reader_mtx - Mutex for synchronizing access to the reader thread.
- *   reader_cv - Condition variable for reader thread coordination.
- *   input_blocks - Total number of input blocks to process (64-bit).
- *   queue - Pointer to the job queue for pending jobs.
- *   queue_mtx - Mutex for synchronizing access to the job queue.
- *   queue_cv - Condition variable for job queue coordination.
- *   maxjobid - Maximum job ID assigned so far.
- *   req_mtx - Mutex for synchronizing inflight request counter.
- *   req_cv - Condition variable for inflight request coordination.
- *   inflight_reqs - Number of inflight requests (volatile int32_t).
- *   exit_request - If true, signals threads to exit.
- *   verbose - If true, enables verbose logging for debugging or progress reporting.
+ * Lifecycle: allocate with tsqAllocateContextCompression_MT(), submit one or
+ * more jobs with tsqCompress_MT() or tsqCompressAsync_MT(), then deallocate
+ * with tsqDeallocateContextCompression_MT().
  */
 class TSQCompressionContext_MT {
 public:
@@ -347,30 +443,44 @@ public:
         reader_mtx(), reader_cv(), input_blocks(0), queue(nullptr), queue_mtx(), queue_cv(), maxjobid(1), req_mtx(), req_cv(),
         inflight_reqs(0), exit_request(false), verbose(false) {}
 
+    /** Number of compression worker threads. Set at allocation time. */
     uint32_t num_cores;
+    /** Array of num_cores TSQWorker structures, each owning input/output buffer queues. */
     struct TSQWorker* workers;
 
+    /** Array of num_cores std::thread pointers, one per compression worker. */
     std::thread** threads;
+    /** Reader thread that reads input data and distributes blocks to workers round-robin. */
     std::thread* reader;
+    /** Writer thread that collects compressed blocks from workers and writes output in order. */
     std::thread* writer;
 
+    /** Mutex protecting the reader thread's wait condition (worker input capacity). */
     std::mutex reader_mtx;
+    /** Condition variable signalled when a worker frees an input slot. */
     std::condition_variable reader_cv;
 
-    // scheduling
+    /** Running count of input blocks dispatched across all jobs since context creation. */
     uint64_t input_blocks;
 
-    // Job queue
+    /** FIFO queue of pending TSQJob pointers waiting to be read and dispatched. */
     std::queue<struct TSQJob*> *queue;
+    /** Mutex protecting the job queue. */
     std::mutex queue_mtx;
+    /** Condition variable signalled when a new job is enqueued. */
     std::condition_variable queue_cv;
+    /** Next job ID to assign. Monotonically increasing starting from 1. */
     uint32_t maxjobid;
+    /** Mutex protecting the inflight request counter. */
     std::mutex req_mtx;
+    /** Condition variable signalled when a new request arrives or completes. */
     std::condition_variable req_cv;
-    volatile int32_t inflight_reqs;
+    /** Number of jobs currently in-flight (submitted but not yet fully written). */
+    std::atomic<int32_t> inflight_reqs;
 
-    // Exit
-    bool exit_request;
+    /** When set to true, all threads drain their queues and exit. */
+    std::atomic<bool> exit_request;
+    /** If true, compression progress and completion messages are printed to stdout. */
     bool verbose;
 
 };
@@ -379,27 +489,14 @@ public:
  * @class TSQDecompressionContext_MT
  * @brief Multi-threaded decompression context for parallel file or buffer decompression.
  *
- * Manages worker threads, job queues, and synchronization for high-performance decompression.
+ * Mirrors TSQCompressionContext_MT but for the decompression pipeline.
+ * The reader thread parses the stream header, reads compressed blocks, and
+ * dispatches them to worker threads. Each worker decompresses its block.
+ * The writer thread collects decompressed blocks in order and writes them out.
  *
- * Fields:
- *   num_cores - Number of worker threads (cores) used for decompression.
- *   workers - Pointer to array of TSQWorker structures, one per thread.
- *   threads - Array of thread pointers for worker threads.
- *   reader - Thread responsible for reading input data and dispatching jobs.
- *   writer - Thread responsible for writing output data.
- *   reader_mtx - Mutex for synchronizing access to the reader thread.
- *   reader_cv - Condition variable for reader thread coordination.
- *   input_blocks - Total number of input blocks to process (64-bit).
- *   blocks_writen - Number of blocks written so far (64-bit, progress tracking).
- *   queue - Pointer to the job queue for pending jobs.
- *   queue_mtx - Mutex for synchronizing access to the job queue.
- *   queue_cv - Condition variable for job queue coordination.
- *   maxjobid - Maximum job ID assigned so far.
- *   req_mtx - Mutex for synchronizing inflight request counter.
- *   req_cv - Condition variable for inflight request coordination.
- *   inflight_reqs - Number of inflight requests (volatile int32_t).
- *   exit_request - If true, signals threads to exit.
- *   verbose - If true, enables verbose logging for debugging or progress reporting.
+ * Lifecycle: allocate with tsqAllocateContextDecompression_MT(), submit one or
+ * more jobs with tsqDecompress_MT() or tsqDecompressAsync_MT(), then deallocate
+ * with tsqDeallocateContextDecompression_MT().
  */
 class TSQDecompressionContext_MT {
 public:
@@ -408,31 +505,46 @@ public:
         reader_mtx(), reader_cv(), input_blocks(0), queue(nullptr), queue_mtx(), queue_cv(), maxjobid(1), req_mtx(), req_cv(),
         inflight_reqs(0), exit_request(false), verbose(false) {}
 
+    /** Number of decompression worker threads. Set at allocation time. */
     uint32_t num_cores;
+    /** Array of num_cores TSQWorker structures, each owning input/output buffer queues. */
     struct TSQWorker* workers;
 
+    /** Array of num_cores std::thread pointers, one per decompression worker. */
     std::thread** threads;
+    /** Reader thread that parses the compressed stream and distributes blocks to workers. */
     std::thread* reader;
+    /** Writer thread that collects decompressed blocks from workers and writes output in order. */
     std::thread* writer;
 
+    /** Mutex protecting the reader thread's wait condition (worker input capacity). */
     std::mutex reader_mtx;
+    /** Condition variable signalled when a worker frees an input slot. */
     std::condition_variable reader_cv;
 
-    // scheduling
+    /** Running count of compressed input blocks dispatched across all jobs. */
     uint64_t input_blocks;
+    /** Running count of decompressed blocks written out. Used for progress tracking. */
     uint64_t blocks_writen;
 
-    // Job queue
+    /** FIFO queue of pending TSQJob pointers waiting to be read and dispatched. */
     std::queue<struct TSQJob*> *queue;
+    /** Mutex protecting the job queue. */
     std::mutex queue_mtx;
+    /** Condition variable signalled when a new job is enqueued. */
     std::condition_variable queue_cv;
+    /** Next job ID to assign. Monotonically increasing starting from 1. */
     uint32_t maxjobid;
+    /** Mutex protecting the inflight request counter. */
     std::mutex req_mtx;
+    /** Condition variable signalled when a new request arrives or completes. */
     std::condition_variable req_cv;
-    volatile int32_t inflight_reqs;
+    /** Number of jobs currently in-flight (submitted but not yet fully written). */
+    std::atomic<int32_t> inflight_reqs;
 
-    // Exit
-    bool exit_request;
+    /** When set to true, all threads drain their queues and exit. */
+    std::atomic<bool> exit_request;
+    /** If true, decompression progress and completion messages are printed to stdout. */
     bool verbose;
 
 };
@@ -472,12 +584,13 @@ extern "C" {
     /**
      * Allocates and initializes a multi-threaded compression context.
      *
+     * @param n_threads Number of threads to use for compression. If 0, the compression will use 1 thread.
      * @param verbose If true, enables verbose logging for debugging or progress reporting.
      * @return Pointer to a newly allocated TSQCompressionContext_MT structure, or nullptr on failure.
      *
      * @note The returned context must be deallocated with tsqDeallocateContextCompression_MT().
      */
-    struct TSQCompressionContext_MT* tsqAllocateContextCompression_MT( bool verbose );
+    struct TSQCompressionContext_MT* tsqAllocateContextCompression_MT( uint32_t n_threads, bool verbose );
 
     /**
      * Deallocates a multi-threaded compression context and releases all associated resources.
@@ -492,20 +605,24 @@ extern "C" {
      * Compresses data using a multi-threaded context.
      *
      * @param ctx Compression context allocated by tsqAllocateContextCompression_MT().
-     * @param in Pointer to input data buffer or filename (see infile).
-     * @param szin Size of the input data in bytes.
-     * @param infile If true, 'in' is interpreted as a filename; if false, as a memory buffer.
-     * @param out Pointer to a pointer that will receive the output buffer address (allocated by the function if outfile is false).
-     * @param szout Pointer to a variable that will receive the size of the compressed output in bytes.
-     * @param outfile If true, 'out' is interpreted as a filename; if false, as a memory buffer.
-     * @param useextensions If true, enables format extensions for improved compression or features.
-     * @param level Compression level (implementation-defined, typically 0 = fastest, higher = better compression).
-     * @return True on success, false on failure.
+     * @param in Pointer to input data buffer, or a null-terminated filename string if infile is true.
+     * @param szin Size of the input data in bytes. When infile is true, the actual size is read from the file.
+     * @param infile If true, 'in' is interpreted as a filename to open; if false, as an in-memory buffer.
+     * @param out Pointer to a pointer that receives the output. When outfile is true, points to a filename
+     *            string; when false, the function allocates the output buffer and stores its address here.
+     * @param szout Pointer to a variable that receives the compressed output size in bytes.
+     * @param outfile If true, compressed data is written to the file named by *out; if false, to a malloc'd buffer.
+     * @param version Stream format version: 1 = TSQ1 (legacy), 2 = TSQ2 (current). Determines the stream
+     *                header written and the block framing used.
+     * @param level Compression level controlling the encoder algorithm:
+     *              0 = fast hash-based encoder, 1-5 = history-based encoder (higher = more candidates),
+     *              6 = optimal suffix-array encoder.
+     * @return True on success, false on failure (invalid parameters, I/O error, allocation failure).
      *
-     * @note If outfile is false, the function allocates the output buffer, which must be freed by the caller using free().
-     * @note Thread safety: the context should not be used concurrently by multiple threads.
+     * @note If outfile is false, the caller must free() the output buffer after use.
+     * @note This call blocks until compression completes. For non-blocking operation, use tsqCompressAsync_MT().
      */
-    bool tsqCompress_MT( TSQCompressionContext_MT* ctx, uint8_t* in, size_t szin, bool infile, uint8_t** out, size_t *szout, bool outfile, bool useextensions, uint32_t level );
+    bool tsqCompress_MT( TSQCompressionContext_MT* ctx, uint8_t* in, size_t szin, bool infile, uint8_t** out, size_t *szout, bool outfile, uint32_t version, uint32_t level );
 
     /**
      * Compresses data asynchronously using a multi-threaded context.
@@ -515,16 +632,18 @@ extern "C" {
      * Completion and progress are reported via user-provided callback functions.
      *
      * @param ctx Pointer to a TSQCompressionContext_MT structure, managing worker threads and job queues.
-     * @param in Pointer to input data buffer or filename (see infile).
-     *           If infile is true, this should be a filename string; otherwise, a memory buffer.
-     * @param szin Size of the input data in bytes. Ignored if infile is true and input is a filename.
-     * @param infile If true, 'in' is interpreted as a filename; if false, as a memory buffer.
-     * @param out Pointer to a pointer that will receive the output buffer address (allocated by the function if outfile is false).
-     *            If outfile is true, this should be a filename string; otherwise, a pointer to a memory buffer.
-     * @param szout Pointer to a variable that will receive the size of the compressed output in bytes.
-     * @param outfile If true, 'out' is interpreted as a filename; if false, as a memory buffer.
-     * @param useextensions If true, enables format extensions for improved compression or features.
-     * @param level Compression level (implementation-defined, typically 0 = fastest, higher = better compression).
+     * @param in Pointer to input data buffer, or a null-terminated filename string if infile is true.
+     * @param szin Size of the input data in bytes. When infile is true, the actual size is determined from the file.
+     * @param infile If true, 'in' is interpreted as a filename to open; if false, as an in-memory buffer.
+     * @param out Pointer to a pointer that receives the output. When outfile is true, points to a filename
+     *            string; when false, the function allocates the output buffer and stores its address here.
+     * @param szout Pointer to a variable that receives the compressed output size in bytes.
+     * @param outfile If true, compressed data is written to the file named by *out; if false, to a malloc'd buffer.
+     * @param version Stream format version: 1 = TSQ1 (legacy), 2 = TSQ2 (current). Determines the stream
+     *                header and block framing.
+     * @param level Compression level controlling the encoder algorithm:
+     *              0 = fast hash-based encoder, 1-5 = history-based encoder (higher = more candidates),
+     *              6 = optimal suffix-array encoder.
      * @param user_completion_cb Optional user callback invoked when the job completes.
      *        Signature: void(uint32_t jobid, bool success)
      *        - jobid: Unique job identifier.
@@ -540,18 +659,19 @@ extern "C" {
      * @note If outfile is false, the output buffer is allocated and must be freed by the caller.
      * @note Thread safety: the context should not be used concurrently by multiple threads.
      */
-    uint32_t tsqCompressAsync_MT( TSQCompressionContext_MT* ctx, uint8_t* in, size_t szin, bool infile, uint8_t** out, size_t *szout, bool outfile, bool useextensions, uint32_t level,
+    uint32_t tsqCompressAsync_MT( TSQCompressionContext_MT* ctx, uint8_t* in, size_t szin, bool infile, uint8_t** out, size_t *szout, bool outfile, uint32_t version, uint32_t level,
         std::function<void(uint32_t jobid, bool)> user_completion_cb, std::function<void(uint32_t jobid, double)> user_progress_cb );
 
     /**
      * Allocates and initializes a multi-threaded decompression context.
      *
+     * @param n_threads Number of worker threads. Use 0 to auto-detect the hardware concurrency.
      * @param verbose If true, enables verbose logging for debugging or progress reporting.
      * @return Pointer to a newly allocated TSQDecompressionContext_MT structure, or nullptr on failure.
      *
      * @note The returned context must be deallocated with tsqDeallocateContextDecompression_MT().
      */
-    struct TSQDecompressionContext_MT* tsqAllocateContextDecompression_MT( bool verbose );
+    struct TSQDecompressionContext_MT* tsqAllocateContextDecompression_MT( uint32_t n_threads, bool verbose );
 
     /**
      * Deallocates a multi-threaded decompression context and releases all associated resources.
@@ -587,14 +707,13 @@ extern "C" {
      * Completion and progress are reported via user-provided callback functions.
      *
      * @param ctx Pointer to a TSQDecompressionContext_MT structure, managing worker threads and job queues.
-     * @param in Pointer to input data buffer or filename (see infile).
-     *           If infile is true, this should be a filename string; otherwise, a memory buffer.
-     * @param szin Size of the input data in bytes. Ignored if infile is true and input is a filename.
-     * @param infile If true, 'in' is interpreted as a filename; if false, as a memory buffer.
-     * @param out Pointer to a pointer that will receive the output buffer address (allocated by the function if outfile is false).
-     *            If outfile is true, this should be a filename string; otherwise, a pointer to a memory buffer.
-     * @param szout Pointer to a variable that will receive the size of the decompressed output in bytes.
-     * @param outfile If true, 'out' is interpreted as a filename; if false, as a memory buffer.
+     * @param in Pointer to compressed data buffer, or a null-terminated filename string if infile is true.
+     * @param szin Size of the compressed input data in bytes. When infile is true, the size is read from the file.
+     * @param infile If true, 'in' is interpreted as a filename to open; if false, as an in-memory buffer.
+     * @param out Pointer to a pointer that receives the output. When outfile is true, points to a filename
+     *            string; when false, the function allocates the output buffer and stores its address here.
+     * @param szout Pointer to a variable that receives the decompressed output size in bytes.
+     * @param outfile If true, decompressed data is written to the file named by *out; if false, to a malloc'd buffer.
      * @param user_completion_cb Optional user callback invoked when the job completes.
      *        Signature: void(uint32_t jobid, bool success, uint8_t* output, size_t sz)
      *        - jobid: Unique job identifier.
@@ -625,6 +744,32 @@ extern "C" {
     struct TSQCompressionContext* tsqAllocateContext();
 
     /**
+     * Allocates and initializes a history-based compression context for single-threaded use.
+     *
+     * The history depth scales with level: histent = 1 << (1 + level).
+     * Higher levels evaluate more match candidates per hash slot, improving compression
+     * ratio at the cost of speed.
+     *
+     * @param level Compression level (1-5). Controls the number of history entries per hash slot.
+     * @return Pointer to a newly allocated TSQCompressionContextHist, or nullptr on failure.
+     *
+     * @note The returned context must be deallocated with tsqDeallocateContextHist().
+     */
+    struct TSQCompressionContextHist* tsqAllocateContextHist( uint32_t level );
+
+    /**
+     * Allocates and initializes an optimal encoder context for single-threaded use.
+     *
+     * Allocates the suffix array (sorthits) and its inverse (reverse_sorthits),
+     * each sized for one TSQ_BLOCK_SZ block.
+     *
+     * @return Pointer to a newly allocated TSQOptContext, or nullptr on failure.
+     *
+     * @note The returned context must be deallocated with tsqDeallocateContextOpt().
+     */
+    TSQOptContext* tsqAllocateContextOpt();
+
+    /**
      * Deallocates a low-level compression context and releases all associated resources.
      *
      * @param ctx Pointer to a TSQCompressionContext previously allocated by tsqAllocateContext().
@@ -634,6 +779,24 @@ extern "C" {
     void tsqDeallocateContext(struct TSQCompressionContext* ctx);
 
     /**
+     * Deallocates a history-based compression context and releases all associated resources.
+     *
+     * @param ctx Pointer to a TSQCompressionContextHist previously allocated by tsqAllocateContextHist().
+     *
+     * @note After this call, the context pointer is invalid and must not be used.
+     */
+    void tsqDeallocateContextHist(struct TSQCompressionContextHist* ctx);
+
+    /**
+     * Deallocates an optimal encoder context and releases the suffix arrays.
+     *
+     * @param ctx Pointer to a TSQOptContext previously allocated by tsqAllocateContextOpt().
+     *
+     * @note After this call, the context pointer is invalid and must not be used.
+     */
+    void tsqDeallocateContextOpt(TSQOptContext* ctx);
+
+    /**
      * Initializes a TSQCompressionContext for block-based compression.
      *
      * @param ctx Pointer to a TSQCompressionContext structure to initialize.
@@ -641,6 +804,16 @@ extern "C" {
      * @note This function must be called before using the context for compression.
      */
     void tsqInit( struct TSQCompressionContext* ctx );
+
+    /**
+     * Resets a TSQCompressionContextHist for a new block.
+     *
+     * Zeroes the hash table and count array so the context can be reused for
+     * the next input block. Must be called before each tsqEncode2_hist() call.
+     *
+     * @param ctx Pointer to a TSQCompressionContextHist to reinitialize.
+     */
+    void tsqInitHist( struct TSQCompressionContextHist* ctx );
 
     /**
      * Encodes (compresses) a single block of data using the provided compression context.
@@ -657,6 +830,59 @@ extern "C" {
     void tsqEncode( struct TSQCompressionContext* ctx, uint8_t *inputBlock, uint8_t *outputBlock, uint32_t *outputSize, uint32_t inputSize, uint32_t withExtensions );
 
     /**
+     * TSQ2 fast encoder (compression level 0).
+     *
+     * Uses a single-slot hash table for O(1) match lookup per position.
+     * Fastest encoder with reasonable compression ratio. Produces the TSQ2
+     * block format (4-bit nibble control + LZ tokens with 16-bit offsets).
+     *
+     * @param ctx Fast compression context allocated by tsqAllocateContext().
+     *            Must be initialized with tsqInit() before each call.
+     * @param input Pointer to the uncompressed input block. Must contain at least inputSize readable bytes.
+     * @param output Pointer to the output buffer. Must be at least TSQ_OUTPUT_SZ bytes.
+     * @param outputSize Receives the compressed size in bytes.
+     * @param inputSize Size of the input block in bytes (at most TSQ_BLOCK_SZ).
+     */
+    void tsqEncode2_fast( struct TSQCompressionContext* ctx, uint8_t *input, uint8_t *output, uint32_t *outputSize, uint32_t inputSize );
+
+    /**
+     * TSQ2 history-based encoder (compression levels 1-5).
+     *
+     * Uses a multi-slot hash table where each slot stores a ring buffer
+     * of recent positions (depth controlled by the context's histent).
+     * Evaluates all candidates in each slot, selecting the longest match
+     * with the smallest offset. Better ratio than the fast encoder at
+     * moderate speed cost.
+     *
+     * @param ctx History compression context allocated by tsqAllocateContextHist(level).
+     *            Must be initialized with tsqInitHist() before each call.
+     * @param input Pointer to the uncompressed input block.
+     * @param output Pointer to the output buffer. Must be at least TSQ_OUTPUT_SZ bytes.
+     * @param outputSize Receives the compressed size in bytes.
+     * @param inputSize Size of the input block in bytes (at most TSQ_BLOCK_SZ).
+     */
+    void tsqEncode2_hist( struct TSQCompressionContextHist* ctx, uint8_t *input, uint8_t *output, uint32_t *outputSize, uint32_t inputSize );
+
+    /**
+     * TSQ2 optimal encoder (compression level 6).
+     *
+     * Builds a suffix array of all input rotations, then uses a backward
+     * greedy LZ parser that searches sorted neighbors for optimal matches.
+     * Produces the best compression ratio at significant CPU cost.
+     * The context's path stack is populated and then drained to emit output.
+     *
+     * @param ctx Optimal encoder context allocated by tsqAllocateContextOpt().
+     *            No initialization call is needed between blocks; the suffix
+     *            array and path stack are rebuilt internally for each call.
+     * @param input Pointer to the uncompressed input block.
+     * @param output Pointer to the output buffer. Must be at least TSQ_OUTPUT_SZ bytes.
+     * @param outputSize Receives the compressed size in bytes. May be nullptr if the
+     *                   caller does not need the size (e.g., during testing).
+     * @param inputSize Size of the input block in bytes (at most TSQ_BLOCK_SZ).
+     */
+    void tsqEncode2_opt( TSQOptContext* ctx, uint8_t *input, uint8_t *output, uint32_t *outputSize, uint32_t inputSize );
+
+    /**
      * Decodes (decompresses) a single block of data.
      *
      * @param inputBlock Pointer to the input data block to decompress.
@@ -668,6 +894,22 @@ extern "C" {
      * @note The output buffer must be large enough to hold the decompressed data (see TSQ_BLOCK_SZ).
      */
     void tsqDecode( uint8_t *inputBlock, uint8_t *outputBlock, uint32_t *outputSize, uint32_t inputSize, uint32_t withExtensions );
+
+    /**
+     * Decodes (decompresses) a single TSQ2 compressed block.
+     *
+     * Reads the 6-byte block header (3 bytes uncompressed size + 3 bytes symbol count),
+     * then processes the nibble-packed control stream to reconstruct the original data
+     * from literal copies and 16-bit-offset LZ match references.
+     *
+     * @param inputBlock Pointer to the compressed block (header + control stream + payload).
+     * @param outputBlock Pointer to the output buffer for decompressed data.
+     *                    Must be at least TSQ_BLOCK_SZ bytes.
+     * @param outputSize Receives the decompressed size in bytes (read from the block header).
+     * @param inputSize Size of the compressed block in bytes.
+     */
+    void tsqDecode2( uint8_t *inputBlock, uint8_t *outputBlock, uint32_t *outputSize, uint32_t inputSize );
+
 
 #if defined (__cplusplus)
 }

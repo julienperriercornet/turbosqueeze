@@ -55,6 +55,12 @@ High-performance libraries like Turbosqueeze do more than just speed up your sof
    cmake ..
    make
    ```
+  For memory debugging with AddressSanitizer:
+  ```bash
+  mkdir build-asan && cd build-asan
+  cmake .. -DCMAKE_BUILD_TYPE=Debug -DENABLE_ASAN=ON
+  make
+  ```
 3. **Integrate into your project:**
    - Include `turbosqueeze.h` in your source files.
    - Link against the generated library.

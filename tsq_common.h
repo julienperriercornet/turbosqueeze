@@ -28,6 +28,31 @@
 #include <cstring>
 
 
+static inline void tsq_memcpy8_loop( uint8_t* dst, uint8_t* src, uint32_t sz )
+{
+    uint64_t* dstp = ((uint64_t*) dst) + 1;
+    uint64_t* srcp = ((uint64_t*) src) + 1;
+    uint64_t* endp = ((uint64_t*) (dst + sz));
+
+    do
+    {
+        *dstp++ = *srcp++;
+    }
+    while ( dstp < endp ) ;
+}
+
+
+static inline void tsq_memcpy8( uint8_t* dst, uint8_t* src, uint32_t sz )
+{
+    *((uint64_t*) dst) = *((uint64_t*) src);
+
+    if (sz > 8)
+    {
+        tsq_memcpy8_loop( dst, src, sz );
+    }
+}
+
+
 static inline void tsq_memcpy16( void* dst, void* src )
 {
 #ifdef AVX2

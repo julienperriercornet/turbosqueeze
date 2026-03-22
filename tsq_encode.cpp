@@ -97,7 +97,7 @@ void tsqEncodeNoext( struct TSQCompressionContext* ctx, uint8_t *input, uint8_t 
                 while ((i-last_i) > 0) ;                
             }
         }
-        while ( (i<size) && !((current == *((uint32_t*) &input[pos])) && ((offset - 4) < 0xFFFB))) ;
+        while ((i<size) && !((current == *((uint32_t*) &input[pos])) && ((offset - 4) < 0xFFFB))) ;
 
         // output literals
         if (((i-last_i) > 0))
@@ -167,7 +167,7 @@ void tsqEncodeNoext( struct TSQCompressionContext* ctx, uint8_t *input, uint8_t 
             ctx->refhash[currhash] = i;
             offset = rep_last_i - pos;
         }
-        while ( (i < size-5) && ((current == *((uint32_t*) &input[pos])) && ((offset-4) < 0xFFFB))) ;
+        while ( ((current == *((uint32_t*) &input[pos])) && (i < size-5) && ((offset-4) < 0xFFFB))) ;
 
     }
     while (i < size) ;

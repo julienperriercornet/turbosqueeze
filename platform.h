@@ -34,7 +34,10 @@ static int stdc_trailing_zeros_ull( unsigned long long value )
     return (int) _tzcnt_u64( value );
 }
 #else
-#include <stdbit.h>
+static int stdc_trailing_zeros_ull( unsigned long long value )
+{
+    return value ? __builtin_ctzll( value ) : 64;
+}
 #endif
 
 #define MAX_CACHE_LINE_SIZE 128

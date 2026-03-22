@@ -49,39 +49,82 @@
 #include "tsq_common.h"
 
 
+static inline bool worker_has_input_capacity(const TSQWorker& worker)
+{
+    const uint64_t current_read_input = worker.currentReadInput.load();
+    const uint64_t current_work_input = worker.currentWorkInput.load();
+    return (current_read_input >= current_work_input) &&
+        ((current_read_input - current_work_input) < worker.n_inputs);
+}
+
+static inline bool worker_has_pending_input(const TSQWorker& worker)
+{
+    return worker.currentReadInput.load() > worker.currentWorkInput.load();
+}
+
+static inline bool worker_has_output_capacity(const TSQWorker& worker)
+{
+    const uint64_t current_work_output = worker.currentWorkOutput.load();
+    const uint64_t current_write_output = worker.currentWriteOutput.load();
+    return (current_work_output - current_write_output) < worker.n_outputs;
+}
+
+static inline bool worker_has_pending_output(const TSQWorker& worker)
+{
+    return worker.currentWorkOutput.load() > worker.currentWriteOutput.load();
+}
+
+static inline bool exit_requested(const TSQCompressionContext_MT* ctx)
+{
+    return ctx->exit_request.load();
+}
+
+static inline bool exit_requested(const TSQDecompressionContext_MT* ctx)
+{
+    return ctx->exit_request.load();
+}
+
+
 void compression_read_worker( TSQCompressionContext_MT* ctx )
 {
     while (true)
     {
-        if (!ctx->exit_request)
+        TSQJob* job = nullptr;
         {
             std::unique_lock<std::mutex> lock(ctx->queue_mtx);
-            ctx->queue_cv.wait(lock, [&]{ return (!ctx->queue->empty()) || ctx->exit_request; });
-            if (ctx->exit_request)
+            ctx->queue_cv.wait(lock, [&]{ return (!ctx->queue->empty()) || exit_requested(ctx); });
+            if (exit_requested(ctx))
                 break;
+
+            job = ctx->queue->front();
+            ctx->queue->pop();
         }
-        else break;
 
-        TSQJob* job = ctx->queue->front();
         FILE* input_stream = job->input_stream;
+        uint8_t* input_buffer = job->input;
         size_t input_size = job->input_size;
+        uint64_t start_block = job->start_block;
+        uint64_t end_block = start_block + job->n_blocks;
+        bool use_extensions = job->use_extensions;
+        uint32_t compression_level = job->compression_level;
 
-        for (uint64_t i=job->start_block; i<job->start_block+job->n_blocks; i++)
+        for (uint64_t i = start_block; i < end_block; i++)
         {
             uint32_t curworker = i % ctx->num_cores;
 
-            if (!((ctx->workers[curworker].currentReadInput >= ctx->workers[curworker].currentWorkInput) && 
-                (ctx->workers[curworker].currentReadInput - ctx->workers[curworker].currentWorkInput) < ctx->workers[curworker].n_inputs))
             {
                 std::unique_lock<std::mutex> lock(ctx->reader_mtx);
-                ctx->reader_cv.wait(lock, [curworker, ctx]{ return (ctx->workers[curworker].currentReadInput >= ctx->workers[curworker].currentWorkInput) && 
-                    (ctx->workers[curworker].currentReadInput - ctx->workers[curworker].currentWorkInput) < ctx->workers[curworker].n_inputs; });
+                if (!worker_has_input_capacity(ctx->workers[curworker]))
+                {
+                    ctx->reader_cv.wait(lock, [curworker, ctx]{ return worker_has_input_capacity(ctx->workers[curworker]); });
+                }
             }
 
-            uint32_t curbuf = ctx->workers[curworker].currentReadInput % ctx->workers[curworker].n_inputs;
-            uint32_t to_read = std::min( (size_t) TSQ_BLOCK_SZ, input_size - (i - job->start_block) * TSQ_BLOCK_SZ);
+            uint32_t curbuf = ctx->workers[curworker].currentReadInput.load() % ctx->workers[curworker].n_inputs;
+            uint32_t to_read = std::min( (size_t) TSQ_BLOCK_SZ, input_size - (i - start_block) * TSQ_BLOCK_SZ);
 
             ctx->workers[curworker].inputs[curbuf].job = job;
+            ctx->workers[curworker].inputs[curbuf].version = job->compression_method;
 
             if (to_read>0 && to_read<=TSQ_BLOCK_SZ)
             {
@@ -94,8 +137,8 @@ void compression_read_worker( TSQCompressionContext_MT* ctx )
                     {
                         ctx->workers[curworker].inputs[curbuf].buffer = inbuff;
                         ctx->workers[curworker].inputs[curbuf].size = to_read;
-                        ctx->workers[curworker].inputs[curbuf].ext = job->use_extensions;
-                        ctx->workers[curworker].inputs[curbuf].compression_level = job->compression_level;
+                        ctx->workers[curworker].inputs[curbuf].ext = use_extensions;
+                        ctx->workers[curworker].inputs[curbuf].compression_level = compression_level;
                     }
                     else
                     {
@@ -106,14 +149,17 @@ void compression_read_worker( TSQCompressionContext_MT* ctx )
                 }
                 else
                 {
-                    ctx->workers[curworker].inputs[curbuf].buffer = job->input + (i - job->start_block) * TSQ_BLOCK_SZ;
+                    ctx->workers[curworker].inputs[curbuf].buffer = input_buffer + (i - start_block) * TSQ_BLOCK_SZ;
                     ctx->workers[curworker].inputs[curbuf].size = to_read;
-                    ctx->workers[curworker].inputs[curbuf].ext = job->use_extensions;
-                    ctx->workers[curworker].inputs[curbuf].compression_level = job->compression_level;
+                    ctx->workers[curworker].inputs[curbuf].ext = use_extensions;
+                    ctx->workers[curworker].inputs[curbuf].compression_level = compression_level;
                 }
 
                 // Signal the worker thread that one input buffer is ready
-                ctx->workers[curworker].currentReadInput++;
+                {
+                    std::lock_guard<std::mutex> lock(ctx->workers[curworker].input_mtx);
+                    ctx->workers[curworker].currentReadInput.fetch_add(1);
+                }
                 ctx->workers[curworker].input_cv.notify_one();
             }
             else
@@ -121,43 +167,58 @@ void compression_read_worker( TSQCompressionContext_MT* ctx )
                 // We chose to propagate the error down the pipeline in case of an error
                 ctx->workers[curworker].inputs[curbuf].buffer = nullptr;
                 ctx->workers[curworker].inputs[curbuf].size = 0;
-                ctx->workers[curworker].currentReadInput++;
+                {
+                    std::lock_guard<std::mutex> lock(ctx->workers[curworker].input_mtx);
+                    ctx->workers[curworker].currentReadInput.fetch_add(1);
+                }
                 ctx->workers[curworker].input_cv.notify_one();
             }
         }
-
-        ctx->queue_mtx.lock();
-        ctx->queue->pop(); // Remove the completed job from the queue
-        ctx->queue_mtx.unlock();
-        ctx->queue_cv.notify_all(); // Notify any waiting threads that a job has been completed
     }
+}
+
+
+static void lazy_init_compressctx(struct TSQCompressionContext** compressctx, struct TSQCompressionContextHist** histctx, TSQOptContext** optctx, uint32_t compression_version, uint32_t compression_level)
+{
+    if (!*compressctx && compression_level == 0) *compressctx = tsqAllocateContext(); // same context for v1 and v2
+    if (!*histctx && compression_version == 2 && compression_level != 0 && compression_level <= 5) *histctx = tsqAllocateContextHist( 5 );
+    if (!*optctx && compression_version == 2 && compression_level == 6) *optctx = tsqAllocateContextOpt();
 }
 
 
 void compression_worker( uint32_t threadid, TSQCompressionContext_MT* ctx )
 {
-    struct TSQCompressionContext* compressctx = tsqAllocateContext();
     TSQWorker& worker = ctx->workers[threadid];
+
+    struct TSQCompressionContext* fastctx = nullptr;
+    struct TSQCompressionContextHist* histctx = nullptr;
+    TSQOptContext* optctx = nullptr;
 
     while (true)
     {
-        if (!((worker.currentReadInput > worker.currentWorkInput) || ctx->exit_request))
         {
             std::unique_lock<std::mutex> lock(worker.input_mtx);
-            worker.input_cv.wait(lock, [&worker,ctx]{ return (worker.currentReadInput > worker.currentWorkInput) || ctx->exit_request; });
+            if (!(worker_has_pending_input(worker) || exit_requested(ctx)))
+            {
+                worker.input_cv.wait(lock, [&worker,ctx]{ return worker_has_pending_input(worker) || exit_requested(ctx); });
+            }
         }
-        if (ctx->exit_request) break;
 
-        uint32_t curin = worker.currentWorkInput % worker.n_inputs;
+        if (exit_requested(ctx)) break;
 
-        if (!(((worker.currentWorkOutput - worker.currentWriteOutput) < worker.n_outputs) || ctx->exit_request))
+        uint32_t curin = worker.currentWorkInput.load() % worker.n_inputs;
+
         {
             std::unique_lock<std::mutex> lock(worker.output_mtx);
-            worker.output_cv.wait(lock, [&worker,ctx]{ return ((worker.currentWorkOutput - worker.currentWriteOutput) < worker.n_outputs) || ctx->exit_request; });
+            if (!(worker_has_output_capacity(worker) || exit_requested(ctx)))
+            {
+                worker.output_cv.wait(lock, [&worker,ctx]{ return worker_has_output_capacity(worker) || exit_requested(ctx); });
+            }
         }
-        if (ctx->exit_request) break;
 
-        uint32_t curout = worker.currentWorkOutput % worker.n_outputs;
+        if (exit_requested(ctx)) break;
+
+        uint32_t curout = worker.currentWorkOutput.load() % worker.n_outputs;
 
         assert(worker.inputs[curin].job != nullptr);
 
@@ -167,25 +228,55 @@ void compression_worker( uint32_t threadid, TSQCompressionContext_MT* ctx )
         worker.outputs[curout].size = 0;
         worker.outputs[curout].job = worker.inputs[curin].job;
         worker.outputs[curout].ext = worker.inputs[curin].ext;
+        worker.outputs[curout].version = worker.inputs[curin].version;
+        worker.outputs[curout].compression_level = worker.inputs[curin].compression_level;
 
-        assert( worker.currentWorkInput == worker.currentWorkOutput );
+        assert( worker.currentWorkInput.load() == worker.currentWorkOutput.load() );
 
         // Compression logic
         if (inbuff != nullptr)
         {
-            tsqInit(compressctx);
-            tsqEncode(compressctx, inbuff, outbuff, &worker.outputs[curout].size, worker.inputs[curin].size, worker.inputs[curin].ext);
+            lazy_init_compressctx(&fastctx, &histctx, &optctx, worker.inputs[curin].version, worker.inputs[curin].compression_level);
+
+            if (worker.inputs[curin].compression_level == 0)
+            {
+                tsqInit(fastctx);
+                if (worker.inputs[curin].version == 1) tsqEncode(fastctx, inbuff, outbuff, &worker.outputs[curout].size, worker.inputs[curin].size, worker.inputs[curin].ext);
+                else if (worker.inputs[curin].version == 2) tsqEncode2_fast(fastctx, inbuff, outbuff, &worker.outputs[curout].size, worker.inputs[curin].size);
+            }
+            else if (worker.inputs[curin].compression_level >= 1 && worker.inputs[curin].compression_level <= 5)
+            {
+                tsqInitHist(histctx);
+                tsqEncode2_hist(histctx, inbuff, outbuff, &worker.outputs[curout].size, worker.inputs[curin].size);
+            }
+            else if (worker.inputs[curin].compression_level == 6)
+            {
+                tsqEncode2_opt(optctx, inbuff, outbuff, &worker.outputs[curout].size, worker.inputs[curin].size);
+            }
+            else
+            {
+                // Invalid compression level, we skip processing this block and all succeeding blocks
+                worker.outputs[curout].size = 0;
+            }
         }
 
-        worker.currentWorkInput++;
+        {
+            std::lock_guard<std::mutex> lock(ctx->reader_mtx);
+            worker.currentWorkInput.fetch_add(1);
+        }
         ctx->reader_cv.notify_one();
 
-        worker.currentWorkOutput++;
+        {
+            std::lock_guard<std::mutex> lock(worker.output_mtx);
+            worker.currentWorkOutput.fetch_add(1);
+        }
         worker.output_cv.notify_one();
     }
 
     // Cleanup after the worker thread is done
-    if (compressctx) tsqDeallocateContext(compressctx);
+    if (fastctx) tsqDeallocateContext(fastctx);
+    if (histctx) tsqDeallocateContextHist(histctx);
+    if (optctx) tsqDeallocateContextOpt(optctx);
 }
 
 
@@ -199,18 +290,21 @@ void compression_write_worker( TSQCompressionContext_MT* ctx )
         uint32_t threadid = i % num_cores;
         TSQWorker& worker = ctx->workers[threadid];
 
-        if (!((worker.currentWorkOutput > worker.currentWriteOutput) || ctx->exit_request))
         {
             std::unique_lock<std::mutex> lock(worker.output_mtx);
 
-            // Wait until there is something to write from this worker
-            worker.output_cv.wait(lock, [&worker,ctx]{
-                return (worker.currentWorkOutput > worker.currentWriteOutput) || ctx->exit_request;
-            });
+            if (!(worker_has_pending_output(worker) || exit_requested(ctx)))
+            {
+                // Wait until there is something to write from this worker
+                worker.output_cv.wait(lock, [&worker,ctx]{
+                    return worker_has_pending_output(worker) || exit_requested(ctx);
+                });
+            }
         }
-        if (ctx->exit_request) break;
 
-        uint32_t curout = worker.currentWriteOutput % worker.n_outputs;
+        if (exit_requested(ctx)) break;
+
+        uint32_t curout = worker.currentWriteOutput.load() % worker.n_outputs;
         TSQJob* job = worker.outputs[curout].job;
         assert( job != nullptr );
         uint8_t* outbuff = worker.outputs[curout].filebuffer;
@@ -262,12 +356,16 @@ void compression_write_worker( TSQCompressionContext_MT* ctx )
             }
             {
                 std::lock_guard<std::mutex> lock(ctx->req_mtx);
-                ctx->inflight_reqs--;
+                ctx->inflight_reqs.fetch_sub(1);
             }
             ctx->req_cv.notify_all();
+            delete job;
         }
 
-        worker.currentWriteOutput++;
+        {
+            std::lock_guard<std::mutex> lock(worker.output_mtx);
+            worker.currentWriteOutput.fetch_add(1);
+        }
         worker.output_cv.notify_one();
 
         i++;
@@ -275,10 +373,12 @@ void compression_write_worker( TSQCompressionContext_MT* ctx )
 }
 
 
-extern "C" uint32_t tsqCompressAsync_MT( TSQCompressionContext_MT* ctx, uint8_t* in, size_t szin, bool infile, uint8_t** out, size_t *szout, bool outfile, bool useextensions, uint32_t level,
+extern "C" uint32_t tsqCompressAsync_MT( TSQCompressionContext_MT* ctx, uint8_t* in, size_t szin, bool infile, uint8_t** out, size_t *szout, bool outfile, uint32_t version, uint32_t level,
     std::function<void(uint32_t jobid, bool)> user_completion_cb, std::function<void(uint32_t jobid, double)> user_progress_cb )
 {
     uint32_t jobid;
+    const uint32_t compression_method = version;
+    const uint32_t stream_header_size = compression_method == 2 ? 19 : 16;
 
     uint8_t* pp = nullptr;
     TSQJob *job = new TSQJob();
@@ -330,13 +430,20 @@ extern "C" uint32_t tsqCompressAsync_MT( TSQCompressionContext_MT* ctx, uint8_t*
             return 0;
         }
 
-        fwrite("TSQ1", 1, 4, job->output_stream);
+        fwrite(compression_method == 2 ? "TSQ2" : "TSQ1", 1, 4, job->output_stream);
         fwrite(&job->n_blocks, 1, 4, job->output_stream);
         fwrite(&job->input_size, 1, sizeof(uint64_t), job->output_stream);
+        if (compression_method == 2)
+        {
+            fputc(compression_method & 0xFF, job->output_stream);
+            fputc((compression_method >> 8) & 0xFF, job->output_stream);
+            fputc((compression_method >> 16) & 0xFF, job->output_stream);
+        }
     }
     else
     {
-        job->output = (uint8_t*) malloc( TSQ_OUTPUT_SZ*job->n_blocks );
+        size_t alloc_size = stream_header_size + (size_t) job->n_blocks * (TSQ_OUTPUT_SZ + 3);
+        job->output = (uint8_t*) malloc( alloc_size );
 
         if (!job->output)
         {
@@ -352,16 +459,23 @@ extern "C" uint32_t tsqCompressAsync_MT( TSQCompressionContext_MT* ctx, uint8_t*
 
         pp = job->output;
         job->outsize = 0;
-        memcpy(job->output, "TSQ1", 4);
+        memcpy(job->output, compression_method == 2 ? "TSQ2" : "TSQ1", 4);
         memcpy(job->output + 4, &job->n_blocks, 4);
         memcpy(job->output + 8, &job->input_size, sizeof(uint64_t));
-        job->output += 16; // Move output pointer past the header
-        job->outsize += 16;
+        if (compression_method == 2)
+        {
+            job->output[16] = compression_method & 0xFF;
+            job->output[17] = (compression_method >> 8) & 0xFF;
+            job->output[18] = (compression_method >> 16) & 0xFF;
+        }
+        job->output += stream_header_size; // Move output pointer past the header
+        job->outsize += stream_header_size;
     }
 
     job->output_file = outfile;
-    job->use_extensions = useextensions;
+    job->compression_method = version;
     job->compression_level = level;
+    job->use_extensions = false;
 
     job->completion_cb = [user_completion_cb,ctx,job,out,szout,pp](uint32_t jobid, bool success) {
         if (ctx->verbose)
@@ -381,7 +495,6 @@ extern "C" uint32_t tsqCompressAsync_MT( TSQCompressionContext_MT* ctx, uint8_t*
         {
             user_completion_cb(jobid, success);
         }
-        delete job;
     };
     job->progress_cb = [user_progress_cb,ctx](uint32_t jobid, double progress) {
         if (ctx->verbose)
@@ -394,7 +507,7 @@ extern "C" uint32_t tsqCompressAsync_MT( TSQCompressionContext_MT* ctx, uint8_t*
 
     {
         std::lock_guard<std::mutex> lock(ctx->req_mtx);
-        ctx->inflight_reqs++;
+        ctx->inflight_reqs.fetch_add(1);
     }
     ctx->req_cv.notify_all();
 
@@ -410,7 +523,7 @@ extern "C" uint32_t tsqCompressAsync_MT( TSQCompressionContext_MT* ctx, uint8_t*
 }
 
 
-extern "C" bool tsqCompress_MT( TSQCompressionContext_MT* ctx, uint8_t* in, size_t szin, bool infile, uint8_t** out, size_t* szout, bool outfile, bool useextensions, uint32_t level )
+extern "C" bool tsqCompress_MT( TSQCompressionContext_MT* ctx, uint8_t* in, size_t szin, bool infile, uint8_t** out, size_t* szout, bool outfile, uint32_t version, uint32_t level )
 {
     if (!ctx || !in || szin == 0 || !out || szout == 0)
     {
@@ -422,7 +535,7 @@ extern "C" bool tsqCompress_MT( TSQCompressionContext_MT* ctx, uint8_t* in, size
     bool finished = false;
     bool return_status;
 
-    tsqCompressAsync_MT( ctx, in, szin, infile, out, szout, outfile, useextensions, level,
+    tsqCompressAsync_MT( ctx, in, szin, infile, out, szout, outfile, version, level,
         [&finished,&return_status,&completion_cv](uint32_t jobid, bool success) {
             finished = true;
             return_status = success;
@@ -445,35 +558,39 @@ void decompression_read_worker( TSQDecompressionContext_MT* ctx )
 {
     while (true)
     {
-        if (!(!ctx->queue->empty() || ctx->exit_request))
+        TSQJob* job = nullptr;
         {
             std::unique_lock<std::mutex> lock(ctx->queue_mtx);
-            ctx->queue_cv.wait(lock, [&]{ return !ctx->queue->empty() || ctx->exit_request; });
+            ctx->queue_cv.wait(lock, [&]{ return !ctx->queue->empty() || exit_requested(ctx); });
+            if (exit_requested(ctx))
+                break;
+
+            job = ctx->queue->front();
+            ctx->queue->pop();
         }
 
-        if (ctx->exit_request)
-            break;
-
-        TSQJob* job = ctx->queue->front();
         FILE* input_stream = job->input_stream;
         size_t input_size = job->input_size;
+        uint32_t start_block = job->start_block;
+        uint32_t end_block = start_block + job->n_blocks;
 
-        for (uint32_t i=job->start_block; i<job->start_block+job->n_blocks; i++)
+        for (uint32_t i = start_block; i < end_block; i++)
         {
             uint32_t curworker = i % ctx->num_cores;
 
-            if (!((ctx->workers[curworker].currentReadInput >= ctx->workers[curworker].currentWorkInput) && 
-                (ctx->workers[curworker].currentReadInput - ctx->workers[curworker].currentWorkInput) < ctx->workers[curworker].n_inputs))
             {
                 std::unique_lock<std::mutex> lock(ctx->reader_mtx);
-                ctx->reader_cv.wait(lock, [curworker, ctx]{ return (ctx->workers[curworker].currentReadInput >= ctx->workers[curworker].currentWorkInput) && 
-                    (ctx->workers[curworker].currentReadInput - ctx->workers[curworker].currentWorkInput) < ctx->workers[curworker].n_inputs; });
+                if (!worker_has_input_capacity(ctx->workers[curworker]))
+                {
+                    ctx->reader_cv.wait(lock, [curworker, ctx]{ return worker_has_input_capacity(ctx->workers[curworker]); });
+                }
             }
 
             uint32_t to_read;
             uint32_t with_extensions;
-            uint32_t curbuf = ctx->workers[curworker].currentReadInput % ctx->workers[curworker].n_inputs;
+            uint32_t curbuf = ctx->workers[curworker].currentReadInput.load() % ctx->workers[curworker].n_inputs;
             ctx->workers[curworker].inputs[curbuf].job = job;
+            ctx->workers[curworker].inputs[curbuf].version = i;
 
             if (input_stream)
             {
@@ -531,14 +648,12 @@ void decompression_read_worker( TSQDecompressionContext_MT* ctx )
                 }
             }
 
-            ctx->workers[curworker].currentReadInput++;
+            {
+                std::lock_guard<std::mutex> lock(ctx->workers[curworker].input_mtx);
+                ctx->workers[curworker].currentReadInput.fetch_add(1);
+            }
             ctx->workers[curworker].input_cv.notify_one();
         }
-
-        ctx->queue_mtx.lock();
-        ctx->queue->pop(); // Remove the completed job from the queue
-        ctx->queue_mtx.unlock();
-        ctx->queue_cv.notify_all(); // Notify any waiting threads that a job has been completed
     }
 }
 
@@ -549,54 +664,71 @@ void decompression_worker( uint32_t threadid, TSQDecompressionContext_MT* ctx )
 
     while (true)
     {
-        if (!(ctx->workers[threadid].currentReadInput > ctx->workers[threadid].currentWorkInput || ctx->exit_request))
         {
             std::unique_lock<std::mutex> lock(ctx->workers[threadid].input_mtx);
-            ctx->workers[threadid].input_cv.wait(lock, [ctx,threadid]{ return ctx->workers[threadid].currentReadInput > ctx->workers[threadid].currentWorkInput || ctx->exit_request; });
+            if (!(worker_has_pending_input(ctx->workers[threadid]) || exit_requested(ctx)))
+            {
+                ctx->workers[threadid].input_cv.wait(lock, [ctx,threadid]{ return worker_has_pending_input(ctx->workers[threadid]) || exit_requested(ctx); });
+            }
         }
 
-        if (ctx->exit_request) break;
+        if (exit_requested(ctx)) break;
 
-        uint32_t curbuf = ctx->workers[threadid].currentWorkInput % ctx->workers[threadid].n_inputs;
+        uint32_t curbuf = ctx->workers[threadid].currentWorkInput.load() % ctx->workers[threadid].n_inputs;
 
-        if (!((ctx->workers[threadid].currentWorkOutput - ctx->workers[threadid].currentWriteOutput) < ctx->workers[threadid].n_outputs || ctx->exit_request))
         {
             std::unique_lock<std::mutex> lock(ctx->workers[threadid].output_mtx);
-            ctx->workers[threadid].output_cv.wait(lock, [ctx,threadid]{ return (ctx->workers[threadid].currentWorkOutput - ctx->workers[threadid].currentWriteOutput) < ctx->workers[threadid].n_outputs || ctx->exit_request; });
+            if (!(worker_has_output_capacity(ctx->workers[threadid]) || exit_requested(ctx)))
+            {
+                ctx->workers[threadid].output_cv.wait(lock, [ctx,threadid]{ return worker_has_output_capacity(ctx->workers[threadid]) || exit_requested(ctx); });
+            }
         }
 
-        if (ctx->exit_request) break;
+        if (exit_requested(ctx)) break;
 
         TSQJob* job = ctx->workers[threadid].inputs[curbuf].job;
 
-        uint32_t curout = ctx->workers[threadid].currentWorkOutput % ctx->workers[threadid].n_outputs;
+        uint32_t curout = ctx->workers[threadid].currentWorkOutput.load() % ctx->workers[threadid].n_outputs;
 
         uint8_t* inbuff = ctx->workers[threadid].inputs[curbuf].buffer;
         uint8_t* outbuff = ctx->workers[threadid].outputs[curout].filebuffer;
 
-        /*
-        if (!job->output_file)
-            outbuff = job->output + (i*ctx->num_cores + threadid - job->start_block) * TSQ_BLOCK_SZ;
-        */
+        if (!job->output_file && job->compression_method == 2)
+        {
+            const uint64_t block_index = ctx->workers[threadid].inputs[curbuf].version;
+            outbuff = job->output + (block_index - job->start_block) * TSQ_BLOCK_SZ;
+        }
 
         ctx->workers[threadid].outputs[curout].job = ctx->workers[threadid].inputs[curbuf].job;
         ctx->workers[threadid].outputs[curout].size = 0;
+        ctx->workers[threadid].outputs[curout].version = ctx->workers[threadid].inputs[curbuf].version;
 
-        assert( ctx->workers[threadid].currentWorkInput == ctx->workers[threadid].currentWorkOutput );
+        assert( ctx->workers[threadid].currentWorkInput.load() == ctx->workers[threadid].currentWorkOutput.load() );
 
         // Decompression logic
         if (inbuff != nullptr)
         {
-            tsqDecode( inbuff, outbuff, &ctx->workers[threadid].outputs[curout].size, ctx->workers[threadid].inputs[curbuf].size, ctx->workers[threadid].inputs[curbuf].ext );
+            if (job->compression_method == 2)
+            {
+                tsqDecode2( inbuff, outbuff, &ctx->workers[threadid].outputs[curout].size, ctx->workers[threadid].inputs[curbuf].size );
+            }
+            else
+            {
+                tsqDecode( inbuff, outbuff, &ctx->workers[threadid].outputs[curout].size, ctx->workers[threadid].inputs[curbuf].size, ctx->workers[threadid].inputs[curbuf].ext );
+            }
         }
 
-        ctx->workers[threadid].currentWorkInput++;
+        {
+            std::lock_guard<std::mutex> lock(ctx->reader_mtx);
+            ctx->workers[threadid].currentWorkInput.fetch_add(1);
+        }
         ctx->reader_cv.notify_one();
 
-        ctx->workers[threadid].currentWorkOutput++;
+        {
+            std::lock_guard<std::mutex> lock(ctx->workers[threadid].output_mtx);
+            ctx->workers[threadid].currentWorkOutput.fetch_add(1);
+        }
         ctx->workers[threadid].output_cv.notify_one();
-
-        i++;
     }
 }
 
@@ -611,19 +743,20 @@ void decompression_write_worker( TSQDecompressionContext_MT* ctx )
         uint32_t threadid = i % num_cores;
         TSQWorker& worker = ctx->workers[threadid];
 
-        if (!(worker.currentWorkOutput > worker.currentWriteOutput || ctx->exit_request))
         {
             std::unique_lock<std::mutex> lock(worker.output_mtx);
-
-            // Wait until there is something to write from this worker
-            worker.output_cv.wait(lock, [&worker,ctx]{
-                return worker.currentWorkOutput > worker.currentWriteOutput || ctx->exit_request;
-            });
+            if (!(worker_has_pending_output(worker) || exit_requested(ctx)))
+            {
+                // Wait until there is something to write from this worker
+                worker.output_cv.wait(lock, [&worker,ctx]{
+                    return worker_has_pending_output(worker) || exit_requested(ctx);
+                });
+            }
         }
 
-        if (ctx->exit_request) break;
+        if (exit_requested(ctx)) break;
 
-        uint32_t curout = worker.currentWriteOutput % worker.n_outputs;
+        uint32_t curout = worker.currentWriteOutput.load() % worker.n_outputs;
         TSQJob* job = worker.outputs[curout].job;
         uint8_t* outbuff = worker.outputs[curout].filebuffer;
         uint32_t outsize = worker.outputs[curout].size;
@@ -644,9 +777,10 @@ void decompression_write_worker( TSQDecompressionContext_MT* ctx )
             }
             else
             {
-                // TODO: speed optimization possible here
-                memcpy(job->output, outbuff, outsize);
-                job->output += outsize; // Move output pointer past the written data 
+                if (job->compression_method == 1)
+                {
+                    memcpy(job->output, outbuff, outsize);
+                }
                 job->outsize += outsize;
             }
         }
@@ -663,12 +797,16 @@ void decompression_write_worker( TSQDecompressionContext_MT* ctx )
             }
             {
                 std::lock_guard<std::mutex> lock(ctx->req_mtx);
-                ctx->inflight_reqs--;
+                ctx->inflight_reqs.fetch_sub(1);
             }
             ctx->req_cv.notify_all();
+            delete job;
         }
 
-        worker.currentWriteOutput++;
+        {
+            std::lock_guard<std::mutex> lock(worker.output_mtx);
+            worker.currentWriteOutput.fetch_add(1);
+        }
         worker.output_cv.notify_one();
 
         i++;
@@ -696,14 +834,11 @@ extern "C" uint32_t tsqDecompressAsync_MT( TSQDecompressionContext_MT* ctx, uint
 
     char magic[5];
     magic[4] = 0;
-    char magic_key[5];
-    magic_key[0] = 'T';
-    magic_key[1] = 'S';
-    magic_key[2] = 'Q';
-    magic_key[3] = '1';
-    magic_key[4] = 0;
+    char magic_key1[5] = "TSQ1";
+    char magic_key2[5] = "TSQ2";
 
     uint32_t n_blocks = 0;
+    uint32_t compression_method = 1;
 
     if (infile)
     {
@@ -729,11 +864,24 @@ extern "C" uint32_t tsqDecompressAsync_MT( TSQDecompressionContext_MT* ctx, uint
         uint32_t read_block = fread(&n_blocks, 1, 4, job->input_stream);
         uint32_t read_is = fread(&job->outsize, 1, sizeof(uint64_t), job->input_stream);
 
-        if (strncmp(&magic[0], &magic_key[0], 4) != 0)
+        if (strncmp(&magic[0], &magic_key1[0], 4) == 0)
+        {
+            compression_method = 1;
+        }
+        else if (strncmp(&magic[0], &magic_key2[0], 4) == 0)
+        {
+            compression_method = 2;
+
+            uint32_t method_l = fgetc(job->input_stream);
+            method_l |= fgetc(job->input_stream) << 8;
+            method_l |= fgetc(job->input_stream) << 16;
+            compression_method = method_l;
+        }
+        else
         {
             if (ctx->verbose)
             {
-                printf("Error: signature mismatch (%s but expected %s).\n", &magic[0], &magic_key[0]);
+                printf("Error: signature mismatch (%s but expected %s or %s).\n", &magic[0], &magic_key1[0], &magic_key2[0]);
             }
             if (user_completion_cb)
                 user_completion_cb(0, false);
@@ -743,7 +891,15 @@ extern "C" uint32_t tsqDecompressAsync_MT( TSQDecompressionContext_MT* ctx, uint
     }
     else
     {
-        if (memcmp(job->input, &magic_key[0], 4) != 0)
+        if (memcmp(job->input, &magic_key1[0], 4) == 0)
+        {
+            compression_method = 1;
+        }
+        else if (memcmp(job->input, &magic_key2[0], 4) == 0)
+        {
+            compression_method = 2;
+        }
+        else
         {
             if (user_completion_cb)
                 user_completion_cb(0, false);
@@ -753,7 +909,19 @@ extern "C" uint32_t tsqDecompressAsync_MT( TSQDecompressionContext_MT* ctx, uint
 
         memcpy(&n_blocks, job->input + 4, 4);
         memcpy(&job->outsize, job->input + 8, sizeof(uint64_t));
-        job->input += 16; // Move input pointer past the header
+
+        if (compression_method == 2)
+        {
+            uint32_t method_l = job->input[16];
+            method_l |= job->input[17] << 8;
+            method_l |= job->input[18] << 16;
+            compression_method = method_l;
+            job->input += 19; // Move input pointer past TSQ2 header
+        }
+        else
+        {
+            job->input += 16; // Move input pointer past TSQ1 header
+        }
     }
 
     if (n_blocks == 0)
@@ -770,6 +938,7 @@ extern "C" uint32_t tsqDecompressAsync_MT( TSQDecompressionContext_MT* ctx, uint
     job->n_blocks = n_blocks;
     job->error_occurred = false;
     job->output_file = outfile;
+    job->compression_method = compression_method;
 
     if (outfile)
     {
@@ -828,7 +997,6 @@ extern "C" uint32_t tsqDecompressAsync_MT( TSQDecompressionContext_MT* ctx, uint
         {
             user_completion_cb(jobid, success);
         }
-        delete job;
     };
     job->progress_cb = [user_progress_cb,ctx](uint32_t jobid, double progress) {
         if (ctx->verbose)
@@ -843,7 +1011,7 @@ extern "C" uint32_t tsqDecompressAsync_MT( TSQDecompressionContext_MT* ctx, uint
 
     {
         std::lock_guard<std::mutex> lock(ctx->req_mtx);
-        ctx->inflight_reqs++;
+        ctx->inflight_reqs.fetch_add(1);
     }
     ctx->req_cv.notify_all();
 

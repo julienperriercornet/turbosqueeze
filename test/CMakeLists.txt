@@ -8,6 +8,7 @@ target_link_libraries(testturbosqueeze PRIVATE turbosqueeze)
 
 add_test(NAME test_tsq_context COMMAND testturbosqueeze test_tsq_context)
 add_test(NAME test_tsq_compress COMMAND testturbosqueeze test_tsq_compress)
+add_test(NAME test_tsq_compress_optimal COMMAND testturbosqueeze test_tsq_compress_optimal)
 add_test(NAME test_tsq_context_mt COMMAND testturbosqueeze test_tsq_context_mt)
 add_test(NAME test_tsq_compress_mt COMMAND testturbosqueeze test_tsq_compress_mt)
 add_test(NAME test_tsq_queue_mt COMMAND testturbosqueeze test_tsq_queue_mt)
