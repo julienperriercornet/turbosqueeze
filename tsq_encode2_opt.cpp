@@ -34,7 +34,7 @@
 #include "platform.h"
 #include "tsq_common.h"
 
-static constexpr uint32_t TSQ_OPT_SORT_WINDOW_BYTES = 256 + 8;
+static constexpr uint32_t TSQ_OPT_SORT_WINDOW_BYTES = 4 + 7 + 255;
 static constexpr uint32_t TSQ_OPT_SORT_LAST_OFFSET = TSQ_OPT_SORT_WINDOW_BYTES - 8;
 
 
@@ -179,10 +179,7 @@ static uint32_t matchlen( uint8_t *input, uint32_t pos1, uint32_t pos2, uint32_t
     // Fast 8-byte comparison while safe
     while (k + 8 <= max_k)
     {
-        uint64_t v1, v2;
-        memcpy(&v1, &input[pos1 + k], 8);
-        memcpy(&v2, &input[pos2 + k], 8);
-        uint64_t xres = v1 ^ v2;
+        uint64_t xres = *((uint64_t*) &input[pos1 + k]) ^ *((uint64_t*) &input[pos2 + k]);
         if (xres != 0)
         {
             k += stdc_trailing_zeros_ull( xres ) >> 3;
@@ -204,16 +201,16 @@ static uint32_t matchlen( uint8_t *input, uint32_t pos1, uint32_t pos2, uint32_t
 ** are located immediately around the current sorted index of all the possible rotations of the input.
 ** We just need to check if the offset is within usable range and voila.
 */
-static bool searchBestLZMatch( uint8_t *input, uint32_t size, uint32_t pos, uint32_t *reverse_sorthits, uint32_t *sorthits, uint32_t &maxk, uint32_t &maxpos )
+static bool searchBestLZMatch( uint8_t *input, uint32_t size, uint32_t pos, uint32_t *reverse_sorthits, uint32_t *sorthits, uint32_t chunk_base, uint32_t chunk_entries, uint32_t &maxk, uint32_t &maxpos )
 {
-    if (pos >= size)
+    if (pos >= size || pos < chunk_base || (pos - chunk_base) >= chunk_entries)
     {
         maxk = 0;
         maxpos = 0xFFFFFFFF;
         return false;
     }
 
-    const uint32_t pos_index = reverse_sorthits[pos];
+    const uint32_t pos_index = reverse_sorthits[pos - chunk_base];
     int64_t i = int64_t(pos_index) - 1;
     uint32_t j = pos_index + 1;
     bool updated;
@@ -227,7 +224,7 @@ static bool searchBestLZMatch( uint8_t *input, uint32_t size, uint32_t pos, uint
         updated = false;
 
         // Search forward by one iteration in the sorted rotations as long as we get a better match than the current one
-        if (j < size)
+        if (j < chunk_entries)
         {
             const uint32_t candidate = sorthits[j];
             uint32_t k = matchlen(input, candidate, pos, size);
@@ -252,7 +249,7 @@ static bool searchBestLZMatch( uint8_t *input, uint32_t size, uint32_t pos, uint
             valid_hits_left &= k >= 4;
         }
 
-        valid_hits_left &= j < size;
+        valid_hits_left &= j < chunk_entries;
 
         // Search backward by one iteration in the sorted rotations as long as we get a better match than the current one
         if (i >= 0)
@@ -300,9 +297,15 @@ static void tsqBackwardsLZGreedy( TSQOptContext* ctx, uint8_t *input, uint32_t s
     {
         bool hitfound = false;
         uint32_t i = pos;
+        uint32_t j = 0;
+        if (pos > (1 << 16)) j = (pos >> 16) - 1;
+        uint32_t chunk_base = j * (1 << 16);
+        uint32_t chunk_entries = std::min( (uint32_t)((j+2) * (1 << 16)), size ) - chunk_base;
         uint32_t maxk, maxpos, bestk, bestpos;
 
-        while (i >= 3 && searchBestLZMatch(input, size, i-3, ctx->reverse_sorthits, ctx->sorthits, maxk, maxpos) && maxk >= (pos - i + 4))
+        while (i >= 3 && 
+            searchBestLZMatch(input, size, i-3, ctx->reverse_sorthits[j], ctx->sorthits[j], chunk_base, chunk_entries, maxk, maxpos) && 
+            maxk >= (pos - i + 4))
         {
             i--;
             bestk = maxk;
@@ -403,21 +406,34 @@ void tsqEncode2_opt( TSQOptContext* ctx, uint8_t *input, uint8_t *output, uint32
     }
 
     // Initialize sorthits with all rotation indices [0..size-1]
-    for (uint32_t i = 0; i < size; i++)
+    const uint32_t n_blocks = (TSQ_BLOCK_SZ >> 16);
+
+    for (uint32_t j=0; j<n_blocks-1; j++)
     {
-        ctx->sorthits[i] = i;
+        if ((j * (1 << 16)) > size) break;
+
+        const uint32_t upper = std::min( (j+2) * (1 << 16), size ) - (j * (1 << 16));
+
+        for (uint32_t i = 0; i < upper; i++)
+        {
+            ctx->sorthits[j][i] = j * (1 << 16) + i;
+        }
+
+        // Sort all rotations using the recursive quicksort approach
+        tsqSortQsort( ctx->sorthits[j], linear_input.data(), 0, upper, 0, size );
+
+        // reverse hits: map local position -> sort rank
+        for (uint32_t i = 0; i < upper; i++)
+        {
+            ctx->reverse_sorthits[j][ctx->sorthits[j][i] - (j * (1 << 16))] = i;
+        }
     }
 
     // Sort all rotations using the recursive quicksort approach
-    tsqSortQsort( ctx->sorthits, linear_input.data(), 0, size, 0, size );
+    //tsqSortQsort( ctx->sorthits, linear_input.data(), 0, size, 0, size );
 
     // Debug only on small buffers: less than 1000 bytes. Print out character by character, for 80 characters in the console, all the possible rotations in order in sortedhits.
     //tsqDebugPrintSortedRotations( ctx->sorthits, input, size );
-
-    for (uint32_t i = 0; i < size; i++)
-    {
-        ctx->reverse_sorthits[ctx->sorthits[i]] = i;
-    }
 
     tsqBackwardsLZGreedy( ctx, input, size );
 

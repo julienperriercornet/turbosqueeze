@@ -118,8 +118,17 @@ extern "C" void tsqInitHist( struct TSQCompressionContextHist* ctx )
 
 void tsqDeallocateContextOpt(TSQOptContext* ctx)
 {
+    const uint32_t n_blocks = (TSQ_BLOCK_SZ >> 16);
+
+    for (uint32_t i=0; i<n_blocks; i++)
+    {
+        free( ctx->sorthits[i] );
+        free( ctx->reverse_sorthits[i] );
+    }
+
     if (ctx->sorthits) free(ctx->sorthits);
     if (ctx->reverse_sorthits) free(ctx->reverse_sorthits);
+
     delete ctx;
 }
 
@@ -129,13 +138,21 @@ TSQOptContext* tsqAllocateContextOpt()
 
     if (ctx)
     {
-        ctx->sorthits = (uint32_t*) malloc( TSQ_BLOCK_SZ * sizeof(uint32_t) );
-        ctx->reverse_sorthits = (uint32_t*) malloc( TSQ_BLOCK_SZ * sizeof(uint32_t) );
+        const uint32_t n_blocks = (TSQ_BLOCK_SZ >> 16);
+
+        ctx->sorthits = (uint32_t**) malloc( n_blocks * sizeof(uint32_t*) );
+        ctx->reverse_sorthits = (uint32_t**) malloc( n_blocks * sizeof(uint32_t*) );
 
         if (!ctx->sorthits || !ctx->reverse_sorthits)
         {
             tsqDeallocateContextOpt(ctx);
             ctx = nullptr;
+        }
+
+        for (uint32_t i=0; i<n_blocks; i++)
+        {
+            ctx->sorthits[i] = (uint32_t*) malloc( (1<<17) * sizeof(uint32_t) );
+            ctx->reverse_sorthits[i] = (uint32_t*) malloc( (1<<17) * sizeof(uint32_t) );
         }
     }
 

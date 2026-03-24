@@ -136,13 +136,13 @@ public:
      * Sorted rotation indices. After sorting, sorthits[i] contains the buffer
      * position whose rotation ranks i-th lexicographically. Size: inputSize entries.
      */
-    uint32_t* sorthits;
+    uint32_t** sorthits;
     /**
      * Inverse mapping of sorthits. reverse_sorthits[pos] gives the rank of the
      * rotation starting at position pos. Used to locate a position's neighborhood
      * in the sorted array for fast LZ match search.
      */
-    uint32_t* reverse_sorthits;
+    uint32_t** reverse_sorthits;
     /**
      * Stack of encoding tokens built by the backward greedy parser.
      * Tokens are pushed back-to-front and popped front-to-back during output.
