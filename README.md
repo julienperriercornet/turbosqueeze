@@ -1,131 +1,173 @@
 # Turbosqueeze
 
-**Realtime Multithreaded Compression Library for C/C++**
+A multithreaded lossless compression library for C/C++.
 
----
+Turbosqueeze splits input into independent blocks and processes them in parallel across worker threads, using a producer-consumer pipeline (reader → compressor workers → writer). It supports both synchronous and asynchronous APIs with progress/completion callbacks.
 
-Turbosqueeze is a cutting-edge, high-performance compression library designed for modern C and C++ applications. Leveraging advanced multithreading and efficient algorithms, Turbosqueeze delivers lightning-fast data compression and decompression, making it ideal for demanding workloads, large files, and real-time systems.
+## Features
 
-## 🚀 Why Turbosqueeze?
+- **Multithreaded compression and decompression** with configurable thread count
+- **Seven compression levels** (0–6): from fast hash-based encoding to optimal suffix-array parsing
+- **Two stream formats**: TSQ1 (legacy) and TSQ2 (current)
+- **File and in-memory buffer** support for both input and output
+- **Asynchronous API** with job IDs, completion callbacks, and progress reporting
+- **MIT licensed**
 
-- **Blazing Fast Performance:**
-  - Multicore parallelism ensures minimal waiting times and maximum throughput.
-  - Optimized for both file and memory buffer operations.
-- **Seamless User Experience:**
-  - Reduced loading times for applications and games.
-  - Instantaneous data access for end-users.
-- **Energy Efficient & Green Computing:**
-  - Less CPU time means lower power consumption.
-  - Efficient resource usage helps reduce heat and extend device battery life.
-  - By minimizing computational waste, Turbosqueeze contributes to a greener, more sustainable digital ecosystem.
-- **Scalable & Flexible:**
-  - Easily integrates into existing projects.
-  - Supports both synchronous and asynchronous workflows.
-  - Handles massive datasets with ease.
+## Building
 
-## 🌱 Contributing to a Greener Future
+```bash
+git clone https://github.com/julienperriercornet/turbosqueeze.git
+cd turbosqueeze
+mkdir build && cd build
+cmake ..
+make
+```
 
-High-performance libraries like Turbosqueeze do more than just speed up your software—they help the planet:
+To build with AddressSanitizer:
 
-- **Lower Energy Footprint:**
-  - Fast algorithms mean less time spent running on hardware, reducing overall energy usage.
-- **Reduced Carbon Emissions:**
-  - Efficient code means data centers and personal devices consume less electricity, helping lower global emissions.
-- **Better for Daily Life:**
-  - Faster apps and services mean less waiting, less frustration, and more productivity for everyone.
+```bash
+cmake .. -DCMAKE_BUILD_TYPE=Debug -DENABLE_ASAN=ON
+make
+```
 
-## ✨ Features
+To run the tests:
 
-- Realtime, multithreaded compression and decompression
-- File and memory buffer support
-- Asynchronous job scheduling with progress and completion callbacks
-- Highly configurable compression levels and format extensions
-- MIT licensed for maximum freedom
+```bash
+ctest
+```
 
-## 📦 Getting Started
+## Command-line tool
 
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/julienperriercornet/turbosqueeze.git
-   cd turbosqueeze
-   ```
-2. **Build with CMake:**
-   ```bash
-   mkdir build && cd build
-   cmake ..
-   make
-   ```
-  For memory debugging with AddressSanitizer:
-  ```bash
-  mkdir build-asan && cd build-asan
-  cmake .. -DCMAKE_BUILD_TYPE=Debug -DENABLE_ASAN=ON
-  make
-  ```
-3. **Integrate into your project:**
-   - Include `turbosqueeze.h` in your source files.
-   - Link against the generated library.
+The `tsq` sample binary supports compression, decompression, and benchmarking:
 
-## 🛠 Example Usage
+```bash
+# Compress (level 0 = fast, level 6 = optimal)
+./tsq -c input.dat output.tsq
+./tsq -c:6 input.dat output.tsq
+
+# Decompress
+./tsq -d output.tsq recovered.dat
+
+# Benchmark (requires enwik9 in working directory)
+./tsq -b
+```
+
+## API usage
+
+### Multithreaded file compression
 
 ```cpp
 #include "turbosqueeze.h"
 
-// Compress a file
-FILE* in = fopen("input.dat", "rb");
-FILE* out = fopen("output.tsq", "wb");
-tsqCompress(in, out, true, 0); // Use extensions, fast compression
-fclose(in);
-fclose(out);
+// Allocate a compression context with 8 worker threads
+TSQCompressionContext_MT* ctx = tsqAllocateContextCompression_MT(8, false);
+
+const char* inpath = "input.dat";
+const char* outpath = "output.tsq";
+size_t outsize = 0;
+
+// Compress file-to-file, TSQ2 format, level 0 (fast)
+tsqCompress_MT(ctx,
+    (uint8_t*) inpath, 0, true,          // input: filename
+    (uint8_t**) &outpath, &outsize, true, // output: filename
+    2, 0);                                // version 2, level 0
+
+tsqDeallocateContextCompression_MT(ctx);
 ```
 
-## ⚡ Benchmarks — Single-threaded Performance (enwik9, 1GB)
+### Multithreaded file decompression
 
-The following single-threaded benchmark was produced with lzbench on the enwik9 dataset (1,000,000,000 bytes). Results show compression and decompression throughput (MB/s), compressed output size and compression ratio.
+```cpp
+#include "turbosqueeze.h"
 
+TSQDecompressionContext_MT* ctx = tsqAllocateContextDecompression_MT(8, false);
 
-lzbench 2.1 | GCC 14.2.0 | 64-bit Linux | AMD Ryzen 7 3700U with Radeon Vega Mobile Gfx  
+const char* inpath = "output.tsq";
+const char* outpath = "recovered.dat";
+size_t outsize = 0;
 
+tsqDecompress_MT(ctx,
+    (uint8_t*) inpath, 0, true,
+    (uint8_t**) &outpath, &outsize, true);
 
-| Compressor | Compression (MB/s) | Decompression (MB/s) | Compressed size (bytes) | Ratio (%) |
-|---|---:|---:|---:|---:|
-| memcpy | 12986 | 13047 | 1,000,000,000 | 100.00 |
-| lz4 (1.10.0) | 439 | 3247 | 509,453,867 | 50.95 |
-| lizard (2.1) -10 | 390 | 2095 | 509,932,407 | 50.99 |
-| snappy (1.2.1) | 299 | 822 | 502,357,470 | 50.24 |
-| fastlz (0.5.0) -1 | 231 | 563 | 504,940,620 | 50.49 |
-| zstd (1.5.7) -1 | 368 | 1226 | 357,148,281 | 35.71 |
-| zstd (1.5.7) -3 | 200 | 1014 | 313,354,892 | 31.34 |
-| zstd (1.5.7) -5 | 91.8 | 953 | 298,064,058 | 29.81 |
-| turbosqueeze (1.0) --no-ext | 305 | 2503 | 622,534,840 | 62.25 |
+tsqDeallocateContextDecompression_MT(ctx);
+```
 
-Notes:
+### In-memory compression and decompression
 
-- Dataset: enwik9 (a 1 GB text corpus commonly used for compression benchmarks).
-- Measurements are single-threaded and reflect the raw throughput on the test machine (see bench.txt for full environment).
-- `memcpy` is included as a theoretical maximum baseline for memory bandwidth.
+```cpp
+#include "turbosqueeze.h"
+#include <cstdlib>
+#include <cstring>
 
-Interpretation:
+const char* data = "Data to compress...";
+size_t data_len = strlen(data);
 
-- Turbosqueeze provides a strong balance between throughput and decompression speed: it achieves competitive compression throughput (305 MB/s) and very high decompression speed (2,503 MB/s) on this dataset.
-- For scenarios where minimal storage size is the top priority, higher compression settings of zstd or other higher-compression algorithms are preferable; for realtime streaming, Turbosqueeze and LZ4-family compressors offer excellent tradeoffs.
-- This is for a fair and square comparaison of turbosqueeze versus other fast loseless compressors in single threaded performance, but the point of turbosqueeze is the multithreaded compression and decompression. The command `./tsq b` is offering a multithreaded benchmark using enwik9 as a test file, and acheives 1813 MB/s compression speed and 5818 MB/s decompression speed. 
+// Compress
+TSQCompressionContext_MT* cctx = tsqAllocateContextCompression_MT(8, false);
+uint8_t* compressed = nullptr;
+size_t compressed_sz = 0;
 
-Reproducing the benchmark:
+tsqCompress_MT(cctx,
+    (uint8_t*) data, data_len, false,       // input: memory buffer
+    &compressed, &compressed_sz, false,      // output: allocated by library
+    2, 0);
 
-- The original results were generated with `lzbench` (see `bench.txt` in this repository). To reproduce locally:
-  1. Install lzbench (https://github.com/inikep/lzbench) and the compressors you want to test.
-  2. Run: `./lzbench -b4096 -t3,5 enwik9` (adjust flags to your desired test configuration).
+tsqDeallocateContextCompression_MT(cctx);
 
-For full raw output and environment details, see `bench.txt` in the repository root.
+// Decompress
+TSQDecompressionContext_MT* dctx = tsqAllocateContextDecompression_MT(8, false);
+uint8_t* decompressed = nullptr;
+size_t decompressed_sz = 0;
 
-## 📚 Documentation
+tsqDecompress_MT(dctx,
+    compressed, compressed_sz, false,
+    &decompressed, &decompressed_sz, false);
 
-See the [API documentation](./turbosqueeze.h) for details on all functions, structures, and usage patterns.
+tsqDeallocateContextDecompression_MT(dctx);
 
-## 🤝 License
+// decompressed now contains the original data
+free(compressed);
+free(decompressed);
+```
 
-Turbosqueeze is released under the MIT License. See [LICENSE](./LICENSE) for details.
+### Asynchronous compression with callbacks
 
----
+```cpp
+#include "turbosqueeze.h"
 
-**Turbosqueeze: Fast, efficient, and eco-friendly compression for the future.**
+TSQCompressionContext_MT* ctx = tsqAllocateContextCompression_MT(8, false);
+uint8_t* compressed = nullptr;
+size_t compressed_sz = 0;
+
+uint32_t jobid = tsqCompressAsync_MT(ctx,
+    (uint8_t*) data, data_len, false,
+    &compressed, &compressed_sz, false,
+    2, 0,
+    [](uint32_t jobid, bool success) {
+        // Called when compression finishes
+    },
+    [](uint32_t jobid, double progress) {
+        // Called periodically with progress in [0.0, 1.0]
+    });
+
+// Deallocate waits for all in-flight jobs to complete
+tsqDeallocateContextCompression_MT(ctx);
+free(compressed);
+```
+
+## Compression levels
+
+| Level | Algorithm | Description |
+|-------|-----------|-------------|
+| 0 | Hash-based | Single-slot hash table, fastest |
+| 1–5 | History-based | Multi-slot hash with increasing depth |
+| 6 | Suffix-array | Optimal parsing, best ratio |
+
+## API reference
+
+See [turbosqueeze.h](./turbosqueeze.h) for the full API documentation.
+
+## License
+
+MIT. See [LICENSE](./LICENSE).
