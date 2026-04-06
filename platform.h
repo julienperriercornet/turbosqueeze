@@ -40,4 +40,17 @@ static int stdc_trailing_zeros_ull( unsigned long long value )
 }
 #endif
 
+#if _MSC_VER
+#include <immintrin.h>
+static unsigned long long stdc_byteswap64( unsigned long long value )
+{
+    return _byteswap_uint64( value );
+}
+#else
+static unsigned long long stdc_byteswap64( unsigned long long value )
+{
+    return __builtin_bswap64( value );
+}
+#endif
+
 #define MAX_CACHE_LINE_SIZE 128

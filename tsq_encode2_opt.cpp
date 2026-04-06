@@ -34,6 +34,7 @@
 #include "platform.h"
 #include "tsq_common.h"
 
+
 static constexpr uint32_t TSQ_OPT_SORT_WINDOW_BYTES = 4 + 7 + 255;
 static constexpr uint32_t TSQ_OPT_SORT_LAST_OFFSET = TSQ_OPT_SORT_WINDOW_BYTES - 8;
 
@@ -43,14 +44,7 @@ static void tsqLinearSearchDiff( uint32_t *ind, uint8_t *input, uint32_t start, 
 
 static inline uint64_t tsqLoadLinearWord( uint8_t *input, uint32_t rotation, uint32_t offset )
 {
-    uint64_t value = 0;
-
-    for (uint32_t byte = 0; byte < 8; byte++)
-    {
-        value = (value << 8) | uint64_t(input[rotation + offset + byte]);
-    }
-
-    return value;
+    return stdc_byteswap64( *((uint64_t*) &input[rotation + offset]) );
 }
 
 
@@ -59,23 +53,9 @@ static int tsqCompareRotationsFull( uint8_t *input, uint32_t a, uint32_t b, uint
     if (a == b)
         return 0;
 
-    for (uint32_t compared = offset; compared <= TSQ_OPT_SORT_LAST_OFFSET; compared += 8)
-    {
-        const uint64_t va = tsqLoadLinearWord(input, a, compared);
-        const uint64_t vb = tsqLoadLinearWord(input, b, compared);
-
-        if (va != vb)
-        {
-            for (uint32_t byte = 0; byte < 8; byte++)
-            {
-                const uint8_t ba = input[a + compared + byte];
-                const uint8_t bb = input[b + compared + byte];
-
-                if (ba != bb)
-                    return ba < bb ? -1 : 1;
-            }
-        }
-    }
+    int cmp = memcmp(input + a + offset, input + b + offset, TSQ_OPT_SORT_WINDOW_BYTES - offset);
+    if (cmp != 0)
+        return cmp;
 
     return a < b ? -1 : 1;
 }

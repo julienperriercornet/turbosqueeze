@@ -54,7 +54,12 @@ void benchmark()
         infilesize = ftell( infile );
         fseek( infile, 0, SEEK_SET );
         input = (char*) malloc( 256+infilesize*sizeof(char) );
+        auto read_start = std::chrono::steady_clock::now();
         size_t szread = fread( input, 1, infilesize, infile );
+        auto read_end = std::chrono::steady_clock::now();
+        double read_sec = std::chrono::duration<double>(read_end - read_start).count();
+        printf( "SSD/HDD read speed: %.3f MB/s (%.3f s for %zu bytes)\n",
+            read_sec > 0.0 ? (double(infilesize)/read_sec)/1000000.0 : 0.0, read_sec, infilesize );
         fclose( infile );
     }
     else
