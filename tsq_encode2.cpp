@@ -1,7 +1,7 @@
 /*
  * Turbosqueeze encoder.
  *
- * Copyright (c) 2024-2025 Julien Perrier-cornet
+ * Copyright (c) 2024-2026 Julien Perrier-cornet
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -77,11 +77,10 @@ void tsqEncode2_fast( struct TSQCompressionContext* ctx, uint8_t *input, uint8_t
 
     uint32_t i = 0, j = 6;
     uint32_t last_size = j++;
-    uint32_t rep_last_i = 0;
     uint32_t n_sym = 0;
     uint32_t last_i;
     uint32_t current, currhash;
-    uint32_t pos, offset;
+    uint32_t pos;
 
     do
     {
@@ -97,9 +96,8 @@ void tsqEncode2_fast( struct TSQCompressionContext* ctx, uint8_t *input, uint8_t
             if (pos >= (i & 0xFFFF)) pos += (i & 0xFFFF0000) - 65536;
             else pos += (i & 0xFFFF0000);
             ctx->refhash[currhash] = i;
-            offset = i - pos;
         }
-        while ((i<size) && !((current == *((uint32_t*) &input[pos])) && ((offset - 4) < 0xFFFC))) ;
+        while ((i<size) && !((current == *((uint32_t*) &input[pos])) && ((i - pos - 4) < 0xFFFC))) ;
 
         // output literals
         if ((i-last_i) > 0)
@@ -116,38 +114,28 @@ void tsqEncode2_fast( struct TSQCompressionContext* ctx, uint8_t *input, uint8_t
             uint64_t* in1 = (uint64_t*) &input[i];
             uint64_t* in2 = (uint64_t*) &input[pos];
             uint64_t xres = (*in1) ^ (*in2);
-            uint32_t k = stdc_trailing_zeros_ull( xres ) >> 3, nb;
-            if (k==8)
+            uint32_t k = 0;
+            while (xres == 0 && k < (4+7+255))
             {
-                do
-                {
-                    in1++;
-                    in2++;
-                    xres = (*in1) ^ (*in2);
-                    nb = stdc_trailing_zeros_ull( xres ) >> 3;
-                    k += nb;
-                } while (nb == 8 && k < (4+7+255)) ;
+                k += 8;
+                in1 ++;
+                in2 ++;
+                xres = (*in1) ^ (*in2);
             }
+            k += stdc_trailing_zeros_ull( xres ) >> 3;
 
             // Don't overlap with data which hasn't been yet decoded in the decoder.
             k = std::min( k, (uint32_t) (4+7+255) );
             k = (k > (i - pos)) ? (i - pos - 1) : k;
+
             if ( k < 4 ) break;
-
-            //printf( "i %u j %u rep %u\n", i, j, k );
-
-            // Output the match offset to current pos
-            //offset = i - pos; // rep_last_i might have changed
-            //if (!((offset-4) < 0xFFFB)) break;
-
-            //assert( offset == (offset & 0xFFFF) );
-            //assert( (offset + k) < rep_last_i );
 
             uint8_t low = k > (4+7) ? 7 : (k - 4);
             uint8_t high = k - 11;
 
             if (k >= (4+7)) output[j++] = high;
 
+            uint32_t offset = i - pos;
             output[j++] = offset & 0xFF;
             output[j++] = offset >> 8;
 
@@ -164,12 +152,11 @@ void tsqEncode2_fast( struct TSQCompressionContext* ctx, uint8_t *input, uint8_t
             if (pos >= (i & 0xFFFF)) pos += (i & 0xFFFF0000) - 65536;
             else pos += (i & 0xFFFF0000);
             ctx->refhash[currhash] = i;
-            offset = i - pos;
         }
-        while ( ((current == *((uint32_t*) &input[pos])) && (i < size-5) && ((offset-4) < 0xFFFC))) ;
+        while ((i < size-5) && ((i-pos-4) < 0xFFFC)) ;
 
     }
-    while (i < size) ;
+    while (true) ;
 
     output[3] = (n_sym & 0xFF);
     output[4] = ((n_sym >> 8) & 0xFF);

@@ -6,6 +6,7 @@
 
 
 #include "../tsq_context.h"
+#include "../tsq_entropy.h"
 
 
 int test_tsq_context()
@@ -358,6 +359,405 @@ int test_tsq_massive_async_mt()
 }
 
 
+int test_tsq_huffmann()
+{
+    uint32_t inputSize = (uint32_t) strlen(testinput);
+    uint32_t encodedSize = 0;
+    uint32_t decodedSize = 0;
+
+    // Worst-case output buffer: header + bitstream
+    uint32_t bufSize = sizeof(uint32_t) + 32 + 256 * sizeof(uint32_t) + inputSize * 4;
+    uint8_t* encoded = (uint8_t*) malloc(bufSize);
+    uint8_t* decoded = (uint8_t*) malloc(inputSize);
+
+    if (!encoded || !decoded)
+    {
+        free(encoded);
+        free(decoded);
+        return 1;
+    }
+
+    TSQEntropyContext ctx;
+
+    tsqEncodeHuffmann(&ctx, (uint8_t*) testinput, inputSize, encoded, &encodedSize);
+    tsqDecodeHuffmann(&ctx, encoded, encodedSize, decoded, &decodedSize);
+
+    int result = 1;
+    if (decodedSize == inputSize && memcmp(testinput, decoded, inputSize) == 0)
+        result = 0;
+
+    free(encoded);
+    free(decoded);
+    return result;
+}
+
+
+int test_tsq_compress_1()
+{
+    TSQCompressionContext_MT* ccontext = tsqAllocateContextCompression_MT( 16, false );
+    TSQDecompressionContext_MT* dcontext = tsqAllocateContextDecompression_MT( 16, false );
+
+    if (ccontext && dcontext)
+    {
+        uint32_t retval = 1;
+
+        char *compressed = nullptr;
+        size_t compressed_sz = 0;
+        char *decompressed = nullptr;
+        size_t decompressed_sz = 0;
+
+        size_t testinput_sz = strlen(testinput);
+
+        uint32_t jobid = tsqCompressAsync_MT(ccontext, (uint8_t*) testinput, testinput_sz, false, (uint8_t**) &compressed, &compressed_sz, false, 2, 1,
+        [&retval,dcontext,&decompressed,&decompressed_sz,&compressed,&compressed_sz,testinput_sz](uint32_t jid, bool success) { 
+            printf( "success: %d\n", success );
+            if (success)
+            {
+                tsqDecompressAsync_MT(dcontext, (uint8_t*) compressed, compressed_sz, false, (uint8_t**) &decompressed, &decompressed_sz, false,
+                    [&retval,&compressed,&decompressed,&decompressed_sz,testinput_sz](uint32_t jid, bool success) {
+                        free(compressed);
+                        compressed = nullptr;
+                        if (testinput_sz == decompressed_sz && memcmp( testinput, decompressed, decompressed_sz ) == 0)
+                            retval = 0;
+                        free(decompressed);
+                        decompressed = nullptr;
+                    },
+                    [](uint32_t,double){}
+                    );
+            }
+        },
+        [](uint32_t,double){}
+        );
+
+        tsqDeallocateContextCompression_MT(ccontext);
+        tsqDeallocateContextDecompression_MT(dcontext);
+
+        return retval;
+    }
+
+    return 1;
+}
+
+
+int test_tsq_compress_2()
+{
+    TSQCompressionContext_MT* ccontext = tsqAllocateContextCompression_MT( 16, false );
+    TSQDecompressionContext_MT* dcontext = tsqAllocateContextDecompression_MT( 16, false );
+
+    if (ccontext && dcontext)
+    {
+        std::atomic<uint32_t> retval = 1;
+
+        char *compressed = nullptr;
+        size_t compressed_sz = 0;
+        char *decompressed = nullptr;
+        size_t decompressed_sz = 0;
+
+        size_t testinput_sz = strlen(testinput);
+
+        uint32_t jobid = tsqCompressAsync_MT(ccontext, (uint8_t*) testinput, testinput_sz, false, (uint8_t**) &compressed, &compressed_sz, false, 2, 2,
+        [&retval,dcontext,&decompressed,&decompressed_sz,&compressed,&compressed_sz,testinput_sz](uint32_t jid, bool success) { 
+            if (success)
+            {
+                tsqDecompressAsync_MT(dcontext, (uint8_t*) compressed, compressed_sz, false, (uint8_t**) &decompressed, &decompressed_sz, false,
+                    [&retval,&compressed,&decompressed,&decompressed_sz,testinput_sz](uint32_t jid, bool success) {
+                        free(compressed);
+                        compressed = nullptr;
+                        if (testinput_sz == decompressed_sz && memcmp( testinput, decompressed, decompressed_sz ) == 0)
+                            retval.fetch_sub(1, std::memory_order_relaxed);
+                        free(decompressed);
+                        decompressed = nullptr;
+                    },
+                    [](uint32_t,double){}
+                    );
+            }
+        },
+        [](uint32_t,double){}
+        );
+
+        tsqDeallocateContextCompression_MT(ccontext);
+        tsqDeallocateContextDecompression_MT(dcontext);
+
+        return retval.load(std::memory_order_relaxed);
+    }
+
+    return 1;
+}
+
+
+int test_tsq_compress_3()
+{
+    TSQCompressionContext_MT* ccontext = tsqAllocateContextCompression_MT( 16, false );
+    TSQDecompressionContext_MT* dcontext = tsqAllocateContextDecompression_MT( 16, false );
+
+    if (ccontext && dcontext)
+    {
+        std::atomic<uint32_t> retval = 1;
+
+        char *compressed = nullptr;
+        size_t compressed_sz = 0;
+        char *decompressed = nullptr;
+        size_t decompressed_sz = 0;
+
+        size_t testinput_sz = strlen(testinput);
+
+        uint32_t jobid = tsqCompressAsync_MT(ccontext, (uint8_t*) testinput, testinput_sz, false, (uint8_t**) &compressed, &compressed_sz, false, 2, 3,
+        [&retval,dcontext,&decompressed,&decompressed_sz,&compressed,&compressed_sz,testinput_sz](uint32_t jid, bool success) { 
+            if (success)
+            {
+                tsqDecompressAsync_MT(dcontext, (uint8_t*) compressed, compressed_sz, false, (uint8_t**) &decompressed, &decompressed_sz, false,
+                    [&retval,&compressed,&decompressed,&decompressed_sz,testinput_sz](uint32_t jid, bool success) {
+                        free(compressed);
+                        compressed = nullptr;
+                        if (testinput_sz == decompressed_sz && memcmp( testinput, decompressed, decompressed_sz ) == 0)
+                            retval.fetch_sub(1, std::memory_order_relaxed);
+                        free(decompressed);
+                        decompressed = nullptr;
+                    },
+                    [](uint32_t,double){}
+                    );
+            }
+        },
+        [](uint32_t,double){}
+        );
+        tsqDeallocateContextCompression_MT(ccontext);
+        tsqDeallocateContextDecompression_MT(dcontext);
+
+        return retval.load(std::memory_order_relaxed);
+    }
+
+    return 1;
+}
+
+
+int test_tsq_compress_4()
+{
+    TSQCompressionContext_MT* ccontext = tsqAllocateContextCompression_MT( 16, false );
+    TSQDecompressionContext_MT* dcontext = tsqAllocateContextDecompression_MT( 16, false );
+
+    if (ccontext && dcontext)
+    {
+        std::atomic<uint32_t> retval = 1;
+
+        char *compressed = nullptr;
+        size_t compressed_sz = 0;
+        char *decompressed = nullptr;
+        size_t decompressed_sz = 0;
+
+        size_t testinput_sz = strlen(testinput);
+
+        uint32_t jobid = tsqCompressAsync_MT(ccontext, (uint8_t*) testinput, testinput_sz, false, (uint8_t**) &compressed, &compressed_sz, false, 2, 4,
+        [&retval,dcontext,&decompressed,&decompressed_sz,&compressed,&compressed_sz,testinput_sz](uint32_t jid, bool success) { 
+            if (success)
+            {
+                tsqDecompressAsync_MT(dcontext, (uint8_t*) compressed, compressed_sz, false, (uint8_t**) &decompressed, &decompressed_sz, false,
+                    [&retval,&compressed,&decompressed,&decompressed_sz,testinput_sz](uint32_t jid, bool success) {
+                        free(compressed);
+                        compressed = nullptr;
+                        if (testinput_sz == decompressed_sz && memcmp( testinput, decompressed, decompressed_sz ) == 0)
+                            retval.fetch_sub(1, std::memory_order_relaxed);
+                        free(decompressed);
+                        decompressed = nullptr;
+                    },
+                    [](uint32_t,double){}
+                    );
+            }
+        },
+        [](uint32_t,double){}
+        );
+        tsqDeallocateContextCompression_MT(ccontext);
+        tsqDeallocateContextDecompression_MT(dcontext);
+
+        return retval.load(std::memory_order_relaxed);
+    }
+
+    return 1;
+}
+
+
+int test_tsq_compress_5()
+{
+    TSQCompressionContext_MT* ccontext = tsqAllocateContextCompression_MT( 16, false );
+    TSQDecompressionContext_MT* dcontext = tsqAllocateContextDecompression_MT( 16, false );
+
+    if (ccontext && dcontext)
+    {
+        std::atomic<uint32_t> retval = 1;
+
+        char *compressed = nullptr;
+        size_t compressed_sz = 0;
+        char *decompressed = nullptr;
+        size_t decompressed_sz = 0;
+
+        size_t testinput_sz = strlen(testinput);
+
+        uint32_t jobid = tsqCompressAsync_MT(ccontext, (uint8_t*) testinput, testinput_sz, false, (uint8_t**) &compressed, &compressed_sz, false, 2, 5,
+        [&retval,dcontext,&decompressed,&decompressed_sz,&compressed,&compressed_sz,testinput_sz](uint32_t jid, bool success) { 
+            if (success)
+            {
+                tsqDecompressAsync_MT(dcontext, (uint8_t*) compressed, compressed_sz, false, (uint8_t**) &decompressed, &decompressed_sz, false,
+                    [&retval,&compressed,&decompressed,&decompressed_sz,testinput_sz](uint32_t jid, bool success) {
+                        free(compressed);
+                        compressed = nullptr;
+                        if (testinput_sz == decompressed_sz && memcmp( testinput, decompressed, decompressed_sz ) == 0)
+                            retval.fetch_sub(1, std::memory_order_relaxed);
+                        free(decompressed);
+                        decompressed = nullptr;
+                    },
+                    [](uint32_t,double){}
+                    );
+            }
+        },
+        [](uint32_t,double){}
+        );
+        tsqDeallocateContextCompression_MT(ccontext);
+        tsqDeallocateContextDecompression_MT(dcontext);
+
+        return retval.load(std::memory_order_relaxed);
+    }
+
+    return 1;
+}
+
+
+int test_tsq_compress_6()
+{
+    TSQCompressionContext_MT* ccontext = tsqAllocateContextCompression_MT( 16, false );
+    TSQDecompressionContext_MT* dcontext = tsqAllocateContextDecompression_MT( 16, false );
+
+    if (ccontext && dcontext)
+    {
+        std::atomic<uint32_t> retval = 1;
+
+        char *compressed = nullptr;
+        size_t compressed_sz = 0;
+        char *decompressed = nullptr;
+        size_t decompressed_sz = 0;
+
+        size_t testinput_sz = strlen(testinput);
+
+        uint32_t jobid = tsqCompressAsync_MT(ccontext, (uint8_t*) testinput, testinput_sz, false, (uint8_t**) &compressed, &compressed_sz, false, 2, 6,
+        [&retval,dcontext,&decompressed,&decompressed_sz,&compressed,&compressed_sz,testinput_sz](uint32_t jid, bool success) { 
+            if (success)
+            {
+                tsqDecompressAsync_MT(dcontext, (uint8_t*) compressed, compressed_sz, false, (uint8_t**) &decompressed, &decompressed_sz, false,
+                    [&retval,&compressed,&decompressed,&decompressed_sz,testinput_sz](uint32_t jid, bool success) {
+                        free(compressed);
+                        compressed = nullptr;
+                        if (testinput_sz == decompressed_sz && memcmp( testinput, decompressed, decompressed_sz ) == 0)
+                            retval.fetch_sub(1, std::memory_order_relaxed);
+                        free(decompressed);
+                        decompressed = nullptr;
+                    },
+                    [](uint32_t,double){}
+                    );
+            }
+        },
+        [](uint32_t,double){}
+        );
+        tsqDeallocateContextCompression_MT(ccontext);
+        tsqDeallocateContextDecompression_MT(dcontext);
+
+        return retval.load(std::memory_order_relaxed);
+    }
+
+    return 1;
+}
+
+
+int test_tsq_compress_7()
+{
+    TSQCompressionContext_MT* ccontext = tsqAllocateContextCompression_MT( 16, false );
+    TSQDecompressionContext_MT* dcontext = tsqAllocateContextDecompression_MT( 16, false );
+
+    if (ccontext && dcontext)
+    {
+        std::atomic<uint32_t> retval = 1;
+
+        char *compressed = nullptr;
+        size_t compressed_sz = 0;
+        char *decompressed = nullptr;
+        size_t decompressed_sz = 0;
+
+        size_t testinput_sz = strlen(testinput);
+
+        uint32_t jobid = tsqCompressAsync_MT(ccontext, (uint8_t*) testinput, testinput_sz, false, (uint8_t**) &compressed, &compressed_sz, false, 3, 6,
+        [&retval,dcontext,&decompressed,&decompressed_sz,&compressed,&compressed_sz,testinput_sz](uint32_t jid, bool success) { 
+            if (success)
+            {
+                tsqDecompressAsync_MT(dcontext, (uint8_t*) compressed, compressed_sz, false, (uint8_t**) &decompressed, &decompressed_sz, false,
+                    [&retval,&compressed,&decompressed,&decompressed_sz,testinput_sz](uint32_t jid, bool success) {
+                        free(compressed);
+                        compressed = nullptr;
+                        if (testinput_sz == decompressed_sz && memcmp( testinput, decompressed, decompressed_sz ) == 0)
+                            retval.fetch_sub(1, std::memory_order_relaxed);
+                        free(decompressed);
+                        decompressed = nullptr;
+                    },
+                    [](uint32_t,double){}
+                    );
+            }
+        },
+        [](uint32_t,double){}
+        );
+        tsqDeallocateContextCompression_MT(ccontext);
+        tsqDeallocateContextDecompression_MT(dcontext);
+
+        return retval.load(std::memory_order_relaxed);
+    }
+
+    return 1;
+}
+
+
+int test_tsq_compress_file()
+{
+    TSQCompressionContext_MT* ccontext = tsqAllocateContextCompression_MT( 16, false );
+    TSQDecompressionContext_MT* dcontext = tsqAllocateContextDecompression_MT( 16, false );
+
+    if (ccontext && dcontext)
+    {
+        std::atomic<uint32_t> retval = 1;
+
+        char *compressed = (char*) malloc( 1024 );
+        strcpy( compressed, "test.tsq" );
+        size_t compressed_sz = strlen( compressed );
+        char *decompressed = nullptr;
+        size_t decompressed_sz = 0;
+
+        size_t testinput_sz = strlen(testinput);
+
+        uint32_t jobid = tsqCompressAsync_MT(ccontext, (uint8_t*) testinput, testinput_sz, false, (uint8_t**) &compressed, &compressed_sz, true, 3, 6,
+        [&retval,dcontext,&decompressed,&decompressed_sz,&compressed,&compressed_sz,testinput_sz](uint32_t jid, bool success) { 
+            if (success)
+            {
+                tsqDecompressAsync_MT(dcontext, (uint8_t*) compressed, compressed_sz, true, (uint8_t**) &decompressed, &decompressed_sz, false,
+                    [&retval,&compressed,&decompressed,&decompressed_sz,testinput_sz](uint32_t jid, bool success) {
+                        printf(success ? "Decompression successful\n" : "Decompression failed\n");
+                        if (testinput_sz == decompressed_sz && memcmp( testinput, decompressed, decompressed_sz ) == 0)
+                            retval.fetch_sub(1, std::memory_order_relaxed);
+                        free(decompressed);
+                        decompressed = nullptr;
+                    },
+                    [](uint32_t,double){}
+                    );
+            }
+        },
+        [](uint32_t,double){}
+        );
+        tsqDeallocateContextCompression_MT(ccontext);
+        tsqDeallocateContextDecompression_MT(dcontext);
+
+        free(compressed);
+        compressed = nullptr;
+
+        return retval.load(std::memory_order_relaxed);
+    }
+
+    return 1;
+}
+
+
 int main( int argc, const char** argv )
 {
     int status = -1;
@@ -386,6 +786,24 @@ int main( int argc, const char** argv )
         status = test_tsq_decompress_async_mt();
     else if (strcmp(argv[1], "test_tsq_massive_async_mt") == 0)
         status = test_tsq_massive_async_mt();
+    else if (strcmp(argv[1], "test_tsq_huffmann") == 0)
+        status = test_tsq_huffmann();
+    else if (strcmp(argv[1], "test_tsq_compress_1") == 0)
+        status = test_tsq_compress_1();
+    else if (strcmp(argv[1], "test_tsq_compress_2") == 0)
+        status = test_tsq_compress_2();
+    else if (strcmp(argv[1], "test_tsq_compress_3") == 0)
+        status = test_tsq_compress_3();
+    else if (strcmp(argv[1], "test_tsq_compress_4") == 0)
+        status = test_tsq_compress_4();
+    else if (strcmp(argv[1], "test_tsq_compress_5") == 0)
+        status = test_tsq_compress_5();
+    else if (strcmp(argv[1], "test_tsq_compress_6") == 0)
+        status = test_tsq_compress_6();
+    else if (strcmp(argv[1], "test_tsq_compress_7") == 0)
+        status = test_tsq_compress_7();
+    else if (strcmp(argv[1], "test_tsq_compress_file") == 0)
+        status = test_tsq_compress_file();
     else
         return -3;
 

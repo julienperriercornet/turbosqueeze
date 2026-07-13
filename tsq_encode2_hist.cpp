@@ -138,6 +138,8 @@ void tsqEncode2_hist( struct TSQCompressionContextHist* ctx, uint8_t *input, uin
     uint32_t last_i;
     uint32_t current, currhash;
 
+    printf( "hello\n" );
+
     do
     {
         bool match;

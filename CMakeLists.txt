@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.15)
 
 project(
     turbosqueeze
-    VERSION 0.8
+    VERSION 3.0
     LANGUAGES CXX)
 
 option(AVX2 "Build with AVX2 optimisations" OFF)
@@ -46,7 +46,12 @@ set(
     tsq_encode2.cpp
     tsq_encode2_hist.cpp
     tsq_encode2_opt.cpp
+    tsq_encode3.cpp
+    tsq_encode3_fast.cpp
     tsq_decode2.cpp
+    tsq_decode3.cpp
+    tsq_entropy.cpp
+    tsq_entropy.h
     platform.h
     turbosqueeze.cpp
     tsq_threads.cpp)

@@ -124,7 +124,7 @@ static void tsqLinearSearchDiff( uint32_t *ind, uint8_t *input, uint32_t start, 
             // recursivity
             if ((i - is) > 1)
             {
-                if (offset < 8)
+                if (offset < 16)
                     tsqSortQsort( ind, input, is, i, offset+8, size );
                 else
                     tsqSortQsortFull( ind, input, is, i, offset+8, size );
@@ -140,7 +140,7 @@ static void tsqLinearSearchDiff( uint32_t *ind, uint8_t *input, uint32_t start, 
     // Handle the last group
     if (is < end - 1)
     {
-        if (offset < 8)
+        if (offset < 16)
             tsqSortQsort( ind, input, is, end, offset+8, size );
         else if (offset < TSQ_OPT_SORT_LAST_OFFSET)
             tsqSortQsortFull( ind, input, is, end, offset+8, size );

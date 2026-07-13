@@ -1,7 +1,7 @@
 /*
  * Turbosqueeze context implementation.
  *
- * Copyright (c) 2024-2025 Julien Perrier-cornet
+ * Copyright (c) 2024-2026 Julien Perrier-cornet
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -52,6 +52,41 @@ extern "C" void tsqDeallocateContext(struct TSQCompressionContext* ctx)
     free(ctx);
 }
 
+extern "C" void tsqDeallocateContext3(struct TSQDecompressionContext3* ctx)
+{
+    if (ctx->buffer) align_free(ctx->buffer);
+    free(ctx);
+}
+
+extern "C" struct TSQCompressionContext3* tsqAllocateContext3Compression()
+{
+    struct TSQCompressionContext3* context = (struct TSQCompressionContext3*) malloc( sizeof(struct TSQCompressionContext3) );
+
+    if (context)
+    {
+        context->refhash = (uint32_t*) align_alloc( MAX_CACHE_LINE_SIZE, TSQ_HASH_SZ * 2 );
+
+        if (!context->refhash)
+        {
+            free(context);
+            context = nullptr;
+        }
+    }
+
+    return context;
+}
+
+extern "C" void tsqDeallocateContext3Compression(struct TSQCompressionContext3* ctx)
+{
+    if (ctx->refhash) align_free(ctx->refhash);
+    free(ctx);
+}
+
+extern "C" void tsqInit3Compression( struct TSQCompressionContext3* ctx )
+{
+    memset( ctx->refhash, 0, TSQ_HASH_SZ * 2 );
+}
+
 void tsqDeallocateContextHist(struct TSQCompressionContextHist* ctx)
 {
     if (ctx->cnthash) align_free(ctx->cnthash);
@@ -80,6 +115,35 @@ extern "C" struct TSQCompressionContext* tsqAllocateContext()
 }
 
 
+extern "C" struct TSQDecompressionContext3* tsqAllocateContext3()
+{
+    struct TSQDecompressionContext3* context = (struct TSQDecompressionContext3*) malloc( sizeof(struct TSQDecompressionContext3) );
+
+    if (context)
+    {
+        context->buffer = nullptr;
+        context->buffer = (uint8_t*) align_alloc( MAX_CACHE_LINE_SIZE, 6 * TSQ_BLOCK_SZ );
+
+        if (context->buffer)
+        {
+            context->sizeBuffer         = context->buffer + 0 * TSQ_BLOCK_SZ;
+            context->offsetHighBuffer   = context->buffer + 1 * TSQ_BLOCK_SZ;
+            context->literalsBuffer     = context->buffer + 2 * TSQ_BLOCK_SZ;
+            context->extraLitSizeBuffer = context->buffer + 3 * TSQ_BLOCK_SZ;
+            context->extraRepSizeBuffer = context->buffer + 4 * TSQ_BLOCK_SZ;
+            context->offsetLowBuffer    = context->buffer + 5 * TSQ_BLOCK_SZ;
+        }
+
+        if (!context->buffer)
+        {
+            tsqDeallocateContext3(context);
+            context = nullptr;
+        }
+    }
+
+    return context;
+}
+
 extern "C" struct TSQCompressionContextHist* tsqAllocateContextHist( uint32_t level )
 {
     struct TSQCompressionContextHist* context = (struct TSQCompressionContextHist*) malloc( sizeof(struct TSQCompressionContextHist) );
@@ -88,7 +152,7 @@ extern "C" struct TSQCompressionContextHist* tsqAllocateContextHist( uint32_t le
     {
         context->refhash = nullptr;
         context->cnthash = nullptr;
-        context->histent = (1 << (1+level));
+        context->histent = (1 << level);
         //context->refhash = (uint16_t*) malloc( context->histent*TSQ_HASH_HIST_SZ );
         context->refhash = (uint16_t*) align_alloc( MAX_CACHE_LINE_SIZE, context->histent*TSQ_HASH_HIST_SZ );
         context->cnthash = (uint32_t*) align_alloc( MAX_CACHE_LINE_SIZE, TSQ_HASH_HIST_SZ*2 );
@@ -109,9 +173,14 @@ extern "C" void tsqInit( struct TSQCompressionContext* ctx )
     memset( ctx->refhash, 0, TSQ_HASH_SZ );
 }
 
-
-extern "C" void tsqInitHist( struct TSQCompressionContextHist* ctx )
+extern "C" void tsqInit3( struct TSQDecompressionContext3* ctx )
 {
+    memset( ctx->buffer, 0, TSQ_OUTPUT_SZ );
+}
+
+extern "C" void tsqInitHist( struct TSQCompressionContextHist* ctx, uint32_t level )
+{
+    ctx->histent = 1 << level;
     memset( ctx->refhash, 0, ctx->histent*TSQ_HASH_HIST_SZ );
     memset( ctx->cnthash, 0, 2*TSQ_HASH_HIST_SZ );
 }

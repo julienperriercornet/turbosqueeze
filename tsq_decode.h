@@ -3,7 +3,7 @@
 /*
  * Turbosqueeze decoder header.
  *
- * Copyright (c) 2024-2025 Julien Perrier-cornet
+ * Copyright (c) 2024-2026 Julien Perrier-cornet
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal

@@ -67,6 +67,29 @@ struct TSQCompressionContext {
     uint16_t *refhash;
 };
 
+struct TSQCompressionContext3 {
+    /** Hash table for fast pattern matching during compression. */
+    uint32_t *refhash;
+};
+
+struct TSQDecompressionContext3 {
+    // Single backing allocation; sub-buffers point into it.
+    uint8_t *buffer;
+    // Decoded stream sub-buffers
+    uint8_t *sizeBuffer;
+    uint8_t *offsetHighBuffer;
+    uint8_t *literalsBuffer;
+    uint8_t *extraLitSizeBuffer;
+    uint8_t *extraRepSizeBuffer;
+    uint8_t *offsetLowBuffer;
+    // End offsets written by tsqReadStream3
+    uint32_t sizeBufferEnd;
+    uint32_t offsetHighBufferEnd;
+    uint32_t literalsBufferEnd;
+    uint32_t extraLitSizeBufferEnd;
+    uint32_t extraRepSizeBufferEnd;
+    uint32_t offsetLowBufferEnd;
+};
 
 /**
  * @struct TSQCompressionContextHist
@@ -742,6 +765,8 @@ extern "C" {
      * @note The returned context must be deallocated with tsqDeallocateContext().
      */
     struct TSQCompressionContext* tsqAllocateContext();
+    struct TSQCompressionContext3* tsqAllocateContext3Compression();
+    struct TSQDecompressionContext3* tsqAllocateContext3();
 
     /**
      * Allocates and initializes a history-based compression context for single-threaded use.
@@ -777,6 +802,7 @@ extern "C" {
      * @note After this call, the context pointer is invalid and must not be used.
      */
     void tsqDeallocateContext(struct TSQCompressionContext* ctx);
+    void tsqDeallocateContext3(struct TSQDecompressionContext3* ctx);
 
     /**
      * Deallocates a history-based compression context and releases all associated resources.
@@ -804,6 +830,8 @@ extern "C" {
      * @note This function must be called before using the context for compression.
      */
     void tsqInit( struct TSQCompressionContext* ctx );
+    void tsqInit3Compression( struct TSQCompressionContext3* ctx );
+    void tsqInit3( struct TSQDecompressionContext3* ctx );
 
     /**
      * Resets a TSQCompressionContextHist for a new block.
@@ -813,7 +841,7 @@ extern "C" {
      *
      * @param ctx Pointer to a TSQCompressionContextHist to reinitialize.
      */
-    void tsqInitHist( struct TSQCompressionContextHist* ctx );
+    void tsqInitHist( struct TSQCompressionContextHist* ctx, uint32_t level );
 
     /**
      * Encodes (compresses) a single block of data using the provided compression context.
@@ -882,6 +910,12 @@ extern "C" {
      */
     void tsqEncode2_opt( TSQOptContext* ctx, uint8_t *input, uint8_t *output, uint32_t *outputSize, uint32_t inputSize );
 
+
+    void tsqEncode3_fast( struct TSQCompressionContext3* ctx, uint8_t *input, uint8_t *output, uint32_t *outputSize, uint32_t inputSize );
+    void tsqEncode3_hist( struct TSQCompressionContextHist* ctx, uint8_t *input, uint8_t *output, uint32_t *outputSize, uint32_t inputSize, uint8_t entropyCoding );
+    void tsqEncode3_opt( TSQOptContext* ctx, uint8_t *input, uint8_t *output, uint32_t *outputSize, uint32_t inputSize, uint8_t entropyCoding );
+
+
     /**
      * Decodes (decompresses) a single block of data.
      *
@@ -909,6 +943,8 @@ extern "C" {
      * @param inputSize Size of the compressed block in bytes.
      */
     void tsqDecode2( uint8_t *inputBlock, uint8_t *outputBlock, uint32_t *outputSize, uint32_t inputSize );
+
+    void tsqDecode3( struct TSQDecompressionContext3* ctx, uint8_t *inputBlock, uint8_t *outputBlock, uint32_t *outputSize, uint32_t inputSize );
 
 
 #if defined (__cplusplus)

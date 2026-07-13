@@ -54,3 +54,11 @@ static unsigned long long stdc_byteswap64( unsigned long long value )
 #endif
 
 #define MAX_CACHE_LINE_SIZE 128
+
+#ifdef AVX2
+#if _MSC_VER
+#include <intrin.h>
+#else
+#include <x86intrin.h>
+#endif
+#endif

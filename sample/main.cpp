@@ -41,7 +41,7 @@
 #include "../tsq_common.h"
 
 
-void benchmark()
+void benchmark( uint32_t compression_level )
 {
     char *input = nullptr;
     const char *infilename = "enwik9";
@@ -68,18 +68,21 @@ void benchmark()
         return;
     }
 
+    printf("Compression level: %u\n", compression_level);
+
     char *compressed = nullptr;
     size_t compressed_sz = 0;
     double compression_sec = 0.0;
+    uint32_t version = compression_level == 7 ? 3 : 2;
 
     if (input)
     {
-        struct TSQCompressionContext_MT* ctx = tsqAllocateContextCompression_MT( 16, false );
+        struct TSQCompressionContext_MT* ctx = tsqAllocateContextCompression_MT( std::thread::hardware_concurrency(), false );
 
         if (ctx)
         {
             auto comp_start = std::chrono::steady_clock::now();
-            tsqCompress_MT( ctx, (uint8_t*) input, infilesize, false, (uint8_t**) &compressed, &compressed_sz, false, 2, 0 );
+            tsqCompress_MT( ctx, (uint8_t*) input, infilesize, false, (uint8_t**) &compressed, &compressed_sz, false, version, compression_level );
             auto comp_end = std::chrono::steady_clock::now();
             compression_sec = std::chrono::duration<double>(comp_end - comp_start).count();
             tsqDeallocateContextCompression_MT( ctx );
@@ -92,7 +95,7 @@ void benchmark()
 
     if (compressed)
     {
-        struct TSQDecompressionContext_MT* dctx = tsqAllocateContextDecompression_MT( 16, false );
+        struct TSQDecompressionContext_MT* dctx = tsqAllocateContextDecompression_MT( std::thread::hardware_concurrency(), false );
 
         if (dctx)
         {
@@ -130,6 +133,9 @@ void benchmark()
     uint8_t* st_decompressed = (uint8_t*) malloc( infilesize + 32 );
 
     struct TSQCompressionContext* st_ctx = tsqAllocateContext();
+    struct TSQCompressionContextHist* st_ctx_hist = tsqAllocateContextHist(5);
+    TSQOptContext* st_ctx_opt = tsqAllocateContextOpt();
+    struct TSQDecompressionContext3* st_decompt_ctx = tsqAllocateContext3();
 
     if (st_ctx && st_decompressed)
     {
@@ -150,8 +156,31 @@ void benchmark()
                 break;
             }
 
-            tsqInit( st_ctx );
-            tsqEncode2_fast( st_ctx, (uint8_t*) input + offset, st_blocks[b], &outsz, to_read );
+            switch (compression_level)
+            {
+                case 0:
+                    tsqInit( st_ctx );
+                    tsqEncode2_fast( st_ctx, (uint8_t*) input + offset, st_blocks[b], &outsz, to_read );
+                    break;
+                case 1:
+                case 2:
+                case 3:
+                case 4:
+                case 5:
+                    tsqInitHist( st_ctx_hist, compression_level );
+                    tsqEncode2_hist( st_ctx_hist, (uint8_t*) input + offset, st_blocks[b], &outsz, to_read );
+                    break;
+                case 6:
+                    tsqEncode2_opt( st_ctx_opt, (uint8_t*) input + offset, st_blocks[b], &outsz, to_read );
+                    break;
+                case 7:
+                    tsqEncode3_opt( st_ctx_opt, (uint8_t*) input + offset, st_blocks[b], &outsz, to_read, 1 );
+                    break;
+                default:
+                    tsqInit( st_ctx );
+                    tsqEncode2_fast( st_ctx, (uint8_t*) input + offset, st_blocks[b], &outsz, to_read );
+                    break;
+            }
             st_blocksz[b] = outsz;
             st_compressed_sz += outsz;
         }
@@ -172,8 +201,29 @@ void benchmark()
                 st_ok = false;
                 break;
             }
+            switch (compression_level)
+            {
+                case 0:
+                    tsqDecode2( st_blocks[b], st_decompressed + offset, &outsz, st_blocksz[b] );
+                    break;
+                case 1:
+                case 2:
+                case 3:
+                case 4:
+                case 5:
+                    tsqDecode2( st_blocks[b], st_decompressed + offset, &outsz, st_blocksz[b] );
+                    break;
+                case 6:
+                    tsqDecode2( st_blocks[b], st_decompressed + offset, &outsz, st_blocksz[b] );
+                    break;
+                case 7:
+                    tsqDecode3( st_decompt_ctx, st_blocks[b], st_decompressed + offset, &outsz, st_blocksz[b] );
+                    break;
+                default:
+                    tsqDecode2( st_blocks[b], st_decompressed + offset, &outsz, st_blocksz[b] );
+                    break;
+            }
 
-            tsqDecode2( st_blocks[b], st_decompressed + offset, &outsz, st_blocksz[b] );
             if (outsz != to_read)
             {
                 st_ok = false;
@@ -218,7 +268,7 @@ static void print_usage(const char* progname)
         "  %s -b | --benchmark\n"
         "  %s -h | --help\n"
         "\nOptions:\n"
-        "  -c, --compress[:level]  Compress input to output (level 0-6, default 0)\n"
+        "  -c, --compress[:level]  Compress input to output (level 0-7, default 0)\n"
         "  -d, --decompress        Decompress input to output\n"
         "  -b, --benchmark         Run benchmark\n"
         "      --version1          Use version 1 format (no extensions)\n"
@@ -331,7 +381,7 @@ int main( int argc, const char** argv )
             return 1;
         }
 
-        struct TSQCompressionContext_MT* ctx = tsqAllocateContextCompression_MT( 16, true );
+        struct TSQCompressionContext_MT* ctx = tsqAllocateContextCompression_MT( std::thread::hardware_concurrency(), true );
 
         if (!ctx)
         {
@@ -341,6 +391,9 @@ int main( int argc, const char** argv )
 
         size_t outsize = strlen(output_file);
         uint32_t format_version = version1 ? 1 : 2;
+        if (compression_level < 0) compression_level = 0;
+        if (compression_level > 7) compression_level = 7;
+        if (compression_level > 6) format_version = 3; // Use version 3 for level 7 
 
         tsqCompress_MT(ctx, (uint8_t*) input_file, strlen(input_file), true,
                        (uint8_t**) &output_file, &outsize, true, format_version, compression_level);
@@ -356,7 +409,7 @@ int main( int argc, const char** argv )
             return 1;
         }
 
-        struct TSQDecompressionContext_MT* ctx = tsqAllocateContextDecompression_MT( 16, true );
+        struct TSQDecompressionContext_MT* ctx = tsqAllocateContextDecompression_MT( std::thread::hardware_concurrency(), true );
 
         if (!ctx)
         {
@@ -373,7 +426,11 @@ int main( int argc, const char** argv )
     }
     else if (mode == MODE_BENCHMARK)
     {
-        benchmark();
+        //benchmark(0);
+        //benchmark(1);
+        //benchmark(5);
+        //benchmark(6);
+        benchmark(7);
     }
 
     return 0;

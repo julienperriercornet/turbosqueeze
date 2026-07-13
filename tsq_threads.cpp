@@ -5,7 +5,7 @@
  * Multi-threaded worker and job queue logic for high-performance compression and decompression.
  * Implements producer-consumer patterns, worker synchronization, and asynchronous job handling.
  *
- * Copyright (c) 2024-2025 Julien Perrier-cornet
+ * Copyright (c) 2024-2026 Julien Perrier-cornet
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -178,11 +178,14 @@ void compression_read_worker( TSQCompressionContext_MT* ctx )
 }
 
 
-static void lazy_init_compressctx(struct TSQCompressionContext** compressctx, struct TSQCompressionContextHist** histctx, TSQOptContext** optctx, uint32_t compression_version, uint32_t compression_level)
+static void lazy_init_compressctx(struct TSQCompressionContext** compressctx, struct TSQCompressionContext3** fastctx3, struct TSQCompressionContextHist** histctx, TSQOptContext** optctx, uint32_t compression_version, uint32_t compression_level)
 {
-    if (!*compressctx && compression_level == 0) *compressctx = tsqAllocateContext(); // same context for v1 and v2
+    if (!*compressctx && compression_level == 0 && compression_version != 3) *compressctx = tsqAllocateContext(); // same context for v1 and v2
+    if (!*fastctx3 && compression_level == 0 && compression_version == 3) *fastctx3 = tsqAllocateContext3Compression();
     if (!*histctx && compression_version == 2 && compression_level != 0 && compression_level <= 5) *histctx = tsqAllocateContextHist( 5 );
     if (!*optctx && compression_version == 2 && compression_level == 6) *optctx = tsqAllocateContextOpt();
+    if (!*histctx && compression_version == 3 && compression_level != 0 && compression_level <= 5) *histctx = tsqAllocateContextHist( 5 );
+    if (!*optctx && compression_version == 3 && compression_level == 6) *optctx = tsqAllocateContextOpt();
 }
 
 
@@ -191,6 +194,7 @@ void compression_worker( uint32_t threadid, TSQCompressionContext_MT* ctx )
     TSQWorker& worker = ctx->workers[threadid];
 
     struct TSQCompressionContext* fastctx = nullptr;
+    struct TSQCompressionContext3* fastctx3 = nullptr;
     struct TSQCompressionContextHist* histctx = nullptr;
     TSQOptContext* optctx = nullptr;
 
@@ -236,22 +240,32 @@ void compression_worker( uint32_t threadid, TSQCompressionContext_MT* ctx )
         // Compression logic
         if (inbuff != nullptr)
         {
-            lazy_init_compressctx(&fastctx, &histctx, &optctx, worker.inputs[curin].version, worker.inputs[curin].compression_level);
+            lazy_init_compressctx(&fastctx, &fastctx3, &histctx, &optctx, worker.inputs[curin].version, worker.inputs[curin].compression_level);
 
             if (worker.inputs[curin].compression_level == 0)
             {
-                tsqInit(fastctx);
-                if (worker.inputs[curin].version == 1) tsqEncode(fastctx, inbuff, outbuff, &worker.outputs[curout].size, worker.inputs[curin].size, worker.inputs[curin].ext);
-                else if (worker.inputs[curin].version == 2) tsqEncode2_fast(fastctx, inbuff, outbuff, &worker.outputs[curout].size, worker.inputs[curin].size);
+                if (worker.inputs[curin].version == 3)
+                {
+                    tsqInit3Compression(fastctx3);
+                    tsqEncode3_fast(fastctx3, inbuff, outbuff, &worker.outputs[curout].size, worker.inputs[curin].size);
+                }
+                else
+                {
+                    tsqInit(fastctx);
+                    if (worker.inputs[curin].version == 1) tsqEncode(fastctx, inbuff, outbuff, &worker.outputs[curout].size, worker.inputs[curin].size, worker.inputs[curin].ext);
+                    else if (worker.inputs[curin].version == 2) tsqEncode2_fast(fastctx, inbuff, outbuff, &worker.outputs[curout].size, worker.inputs[curin].size);
+                }
             }
             else if (worker.inputs[curin].compression_level >= 1 && worker.inputs[curin].compression_level <= 5)
             {
-                tsqInitHist(histctx);
-                tsqEncode2_hist(histctx, inbuff, outbuff, &worker.outputs[curout].size, worker.inputs[curin].size);
+                tsqInitHist(histctx, worker.inputs[curin].compression_level);
+                if (worker.inputs[curin].version == 2) tsqEncode2_hist(histctx, inbuff, outbuff, &worker.outputs[curout].size, worker.inputs[curin].size);
+                else if (worker.inputs[curin].version == 3) tsqEncode3_hist(histctx, inbuff, outbuff, &worker.outputs[curout].size, worker.inputs[curin].size, 1);
             }
             else if (worker.inputs[curin].compression_level == 6)
             {
-                tsqEncode2_opt(optctx, inbuff, outbuff, &worker.outputs[curout].size, worker.inputs[curin].size);
+                if (worker.inputs[curin].version == 2) tsqEncode2_opt(optctx, inbuff, outbuff, &worker.outputs[curout].size, worker.inputs[curin].size);
+                else if (worker.inputs[curin].version == 3) tsqEncode3_opt(optctx, inbuff, outbuff, &worker.outputs[curout].size, worker.inputs[curin].size, 1);
             }
             else
             {
@@ -349,6 +363,13 @@ void compression_write_worker( TSQCompressionContext_MT* ctx )
 
         if (i == job->start_block + job->n_blocks - 1)
         {
+            // Close the output file if we were writing to one
+            if (job->output_file && job->output_stream)
+            {
+                fclose(job->output_stream);
+                job->output_stream = nullptr;
+            }
+
             // Job is complete
             if (job->completion_cb)
             {
@@ -378,7 +399,7 @@ extern "C" uint32_t tsqCompressAsync_MT( TSQCompressionContext_MT* ctx, uint8_t*
 {
     uint32_t jobid;
     const uint32_t compression_method = version;
-    const uint32_t stream_header_size = compression_method == 2 ? 19 : 16;
+    const uint32_t stream_header_size = compression_method == 2 || compression_method == 3 ? 19 : 16;
 
     uint8_t* pp = nullptr;
     TSQJob *job = new TSQJob();
@@ -430,10 +451,10 @@ extern "C" uint32_t tsqCompressAsync_MT( TSQCompressionContext_MT* ctx, uint8_t*
             return 0;
         }
 
-        fwrite(compression_method == 2 ? "TSQ2" : "TSQ1", 1, 4, job->output_stream);
+        fwrite(compression_method == 2 || compression_method == 3? "TSQ2" : "TSQ1", 1, 4, job->output_stream);
         fwrite(&job->n_blocks, 1, 4, job->output_stream);
         fwrite(&job->input_size, 1, sizeof(uint64_t), job->output_stream);
-        if (compression_method == 2)
+        if (compression_method == 2 || compression_method == 3)
         {
             fputc(compression_method & 0xFF, job->output_stream);
             fputc((compression_method >> 8) & 0xFF, job->output_stream);
@@ -459,10 +480,10 @@ extern "C" uint32_t tsqCompressAsync_MT( TSQCompressionContext_MT* ctx, uint8_t*
 
         pp = job->output;
         job->outsize = 0;
-        memcpy(job->output, compression_method == 2 ? "TSQ2" : "TSQ1", 4);
+        memcpy(job->output, compression_method == 2 || compression_method == 3 ? "TSQ2" : "TSQ1", 4);
         memcpy(job->output + 4, &job->n_blocks, 4);
         memcpy(job->output + 8, &job->input_size, sizeof(uint64_t));
-        if (compression_method == 2)
+        if (compression_method == 2 || compression_method == 3)
         {
             job->output[16] = compression_method & 0xFF;
             job->output[17] = (compression_method >> 8) & 0xFF;
@@ -528,6 +549,12 @@ extern "C" bool tsqCompress_MT( TSQCompressionContext_MT* ctx, uint8_t* in, size
     if (!ctx || !in || szin == 0 || !out || szout == 0)
     {
         return false; // Invalid parameters
+    }
+
+    if (level == 7)
+    {
+        version = 3;
+        level = 6;
     }
 
     std::mutex completion_mtx;
@@ -660,6 +687,7 @@ void decompression_read_worker( TSQDecompressionContext_MT* ctx )
 
 void decompression_worker( uint32_t threadid, TSQDecompressionContext_MT* ctx )
 {
+    struct TSQDecompressionContext3* ctx3 = tsqAllocateContext3();
     uint64_t i = 0;
 
     while (true)
@@ -693,7 +721,7 @@ void decompression_worker( uint32_t threadid, TSQDecompressionContext_MT* ctx )
         uint8_t* inbuff = ctx->workers[threadid].inputs[curbuf].buffer;
         uint8_t* outbuff = ctx->workers[threadid].outputs[curout].filebuffer;
 
-        if (!job->output_file && job->compression_method == 2)
+        if (!job->output_file && job->compression_method != 1)
         {
             const uint64_t block_index = ctx->workers[threadid].inputs[curbuf].version;
             outbuff = job->output + (block_index - job->start_block) * TSQ_BLOCK_SZ;
@@ -708,7 +736,11 @@ void decompression_worker( uint32_t threadid, TSQDecompressionContext_MT* ctx )
         // Decompression logic
         if (inbuff != nullptr)
         {
-            if (job->compression_method == 2)
+            if (job->compression_method == 3)
+            {
+                tsqDecode3( ctx3, inbuff, outbuff, &ctx->workers[threadid].outputs[curout].size, ctx->workers[threadid].inputs[curbuf].size );
+            }
+            else if (job->compression_method == 2)
             {
                 tsqDecode2( inbuff, outbuff, &ctx->workers[threadid].outputs[curout].size, ctx->workers[threadid].inputs[curbuf].size );
             }
@@ -730,6 +762,8 @@ void decompression_worker( uint32_t threadid, TSQDecompressionContext_MT* ctx )
         }
         ctx->workers[threadid].output_cv.notify_one();
     }
+
+    tsqDeallocateContext3(ctx3);
 }
 
 
@@ -790,6 +824,13 @@ void decompression_write_worker( TSQDecompressionContext_MT* ctx )
 
         if (i == job->start_block + job->n_blocks - 1)
         {
+            // Close the output file if we were writing to one
+            if (job->output_file && job->output_stream)
+            {
+                fclose(job->output_stream);
+                job->output_stream = nullptr;
+            }
+
             // Job is complete
             if (job->completion_cb)
             {
@@ -930,7 +971,8 @@ extern "C" uint32_t tsqDecompressAsync_MT( TSQDecompressionContext_MT* ctx, uint
         {
             printf("Error: no blocks to decode in input file.\n");
         }
-        job->completion_cb(0, false);
+        if (user_completion_cb)
+            user_completion_cb(0, false);
         delete job;
         return 0; // No blocks to process
     }
@@ -976,6 +1018,7 @@ extern "C" uint32_t tsqDecompressAsync_MT( TSQDecompressionContext_MT* ctx, uint
             return 0;
         }
 
+        printf( "Allocated output buffer of size %zu bytes at %p\n", job->outsize+32, job->output );
         job->outsize = 0;
     }
 
