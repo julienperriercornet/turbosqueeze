@@ -162,7 +162,8 @@ free(compressed);
 |-------|-----------|-------------|
 | 0 | Hash-based | Single-slot hash table, fastest |
 | 1–5 | History-based | Multi-slot hash with increasing depth |
-| 6 | Suffix-array | Optimal parsing, best ratio |
+| 6 | Suffix-array | Optimal parsing |
+| 7 | Suffix-array and Huffman | Optimal parsing, best ratio |
 
 ## API reference
 
